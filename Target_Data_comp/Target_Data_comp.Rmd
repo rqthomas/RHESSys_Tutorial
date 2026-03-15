@@ -1,0 +1,145 @@
+---
+title: "Target_Data_comp"
+output: html_document
+date: "2026-03-15"
+---
+
+```{r}
+library(tidyverse)
+```
+
+
+
+## Get daily Q from HPB PT
+
+```{r}
+hpb_stage_STAGED <- read_csv("https://pasta-s.lternet.edu/package/data/eml/edi/1781/1/630f42ffb3560c3a6afd592511756c1e")
+
+daily_Q <- hpb_stage_STAGED |> 
+  mutate(Date = as.Date(DateTime)) |> 
+  group_by(Date) |> 
+  summarise(Q_cms_PT = mean(Flow_cms, na.rm = T)) |> 
+  mutate(Q_L_s_PT = Q_cms_PT * 1000) |> 
+  select(Date, Q_L_s_PT)
+
+
+```
+
+
+## Get Flowmate observations
+
+```{r}
+flowmate_edi <- read_csv("https://pasta.lternet.edu/package/data/eml/edi/454/9/0e7fe16623a1ad2a67774c23ce8a29d8")
+
+hpb_flowmate <- flowmate_edi |> 
+  filter(Reservoir == "CCR", Site %in% c(101, 100)) |> 
+  mutate(Date = as.Date(DateTime)) |> 
+  dplyr::select(Date, Flow_cms) |> 
+  dplyr::rename(Q_cms_Flowmate = Flow_cms) |> 
+  mutate(Q_L_s_Flowmate = Q_cms_Flowmate * 1000) |> 
+  select(Date, Q_L_s_Flowmate)
+
+```
+
+
+## Get stream chem
+
+```{r}
+chem_EDI <- read_csv("https://pasta.lternet.edu/package/data/eml/edi/199/13/3f09a3d23b7b5dd32ed7d28e9bc1b081")
+
+
+hpb_chem <- chem_EDI |> 
+  mutate(Date = as.Date(DateTime)) |> 
+  filter(Reservoir == "CCR",
+         Site %in% c(101, 100)) |>
+  select(Reservoir, Site, Date, Depth_m, Rep, DOC_mgL, DN_mgL, NO3NO2_ugL, NH4_ugL, SRP_ugL, TN_ugL, TP_ugL) |> 
+  group_by(Date) |> 
+  summarise(across(c(DOC_mgL, DN_mgL, NO3NO2_ugL, NH4_ugL, SRP_ugL, TN_ugL, TP_ugL), mean, na.rm = TRUE)) |> 
+  mutate(DON_mgL = DN_mgL - ((NO3NO2_ugL + NH4_ugL)/1000)) |> 
+  #make all mg/L and drop P for now
+  mutate(NO3_mgL = NO3NO2_ugL / 1000,
+         NH4_mgL = NH4_ugL/1000,
+         TN_mgL = TN_ugL/1000) |> 
+  #round to 3 decimals 
+  pivot_longer(-1) |> 
+  mutate(value = round(value, 3)) |> 
+  pivot_wider(names_from = name, values_from = value) |> 
+  select(Date, DOC_mgL, DON_mgL, NO3_mgL, NH4_mgL, DN_mgL, TN_mgL)
+
+
+
+```
+
+
+
+## Get MODIS LAI DATA 
+
+```{r}
+
+# hpb_lat <- 37.3646
+# hpb_long <- -79.9733
+# ## GET LAI data following Quinn's code
+# #https://frec-5174.github.io/eco4cast-in-R-book/neon-data.html#modis-lai
+# library(MODISTools)
+# lai <- MODISTools::mt_subset(product = "MCD15A2H",
+#                   lat = hpb_lat,
+#                   lon =  hpb_long,
+#                   band = c("Lai_500m", "FparLai_QC"),
+#                   start = as_date("2000-01-01"),
+#                   end = Sys.Date(),
+#                   site_name = "HPB",
+#                   progress = FALSE)
+# 
+# 
+# lai_cleaned <- lai |> 
+#   mutate(scale = ifelse(band == "FparLai_QC", 1, scale),
+#          scale = as.numeric(scale),
+#          value = scale * value,
+#          datetime = lubridate::as_date(calendar_date)) |> 
+#   select(band, value, datetime) |> 
+#   pivot_wider(names_from = band, values_from = value) |> 
+#   filter(FparLai_QC == 0) |> 
+#   rename(observation = Lai_500m) |> 
+#   mutate(variable = "lai") |> 
+#   select(datetime, variable, observation)
+# 
+# 
+# 
+# ### plot lai
+# lai_cleaned <- lai_cleaned |> 
+#   pivot_wider(names_from = variable, values_from = observation) |> 
+#   rename(lai_MODIS = lai)
+# 
+# lai_cleaned |> ggplot(aes(x = datetime, y = lai_MODIS))+ geom_point()+geom_line()
+# 
+# 
+# write.csv(lai_cleaned, "./LAI_modisData_nov2002_jan2026.csv", row.names = F)
+
+lai <- read_csv("./LAI_modisData_nov2002_jan2026.csv") |> 
+  rename(Date = datetime)
+
+
+```
+
+
+##join data together
+
+```{r}
+
+df_join <- full_join(daily_Q, hpb_flowmate, by = "Date") |> 
+  full_join(lai, by = "Date") |> 
+  full_join(hpb_chem, by = "Date") |> 
+  arrange(Date)
+
+
+write.csv(df_join, "./TargetData_15mar26.csv", row.names = F)
+
+
+```
+
+
+
+
+
+
+

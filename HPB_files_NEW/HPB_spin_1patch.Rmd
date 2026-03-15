@@ -1,0 +1,337 @@
+---
+title: "HPB_spinup_1patch"
+output: html_document
+date: "2026-03-15"
+---
+
+##Info on command line -s and -gw scalars
+```{r}
+##info on command line params: https://github.com/RHESSys/RHESSys/wiki/RHESSys-command-line-options
+### -s must be followed by two parameter values for m and K
+# the first value this is a multiplier on the value set for the m parameter in the soil definition files
+# the second required value designates K, hydraulic conductivity at the surface - and is a multiplier on the value set for Ksat_0 in the soil definition files;
+
+### -gw must be followed by two values for gw1 and gw2, respectively. 
+#The first value is a multiplier on the sat_to_gw_coeff parameter set in the soil definition file (representing the amount of water moving from the saturated store to the groundwater store). 
+#The second value is a multiplier on the gw_loss_coeff parameter in the hillslope default file (representing the amount of water moving from the groundwater store to the stream).
+
+#defaults are: m = 0.12; K_sat0 = 0.622; sat_to_gw_coeff = 1; gw_loss_coeff = 1
+
+```
+
+docker run -v C:/Users/dwh18/OneDrive/Desktop/R_projects/RHESSys_Tutorial:/RHESSys/repo -it rhessys/rhessys:develop
+
+
+## make worlds with one patch
+This can be done in your own R outside of the docker
+
+```{r}
+
+
+# 1patch_LHS_spinup.R
+# Extract one representative patch from hpb.world and run LHS parameter
+# sampling on it — much faster than full basin runs for parameter screening
+
+library(RHESSysIOinR)
+library(RHESSysPreprocessing)
+library(rhutils)
+library(data.table)
+library(lhs)
+library(tidyverse)
+
+setwd("repo/HPB_files_NEW")
+options(scipen = 999)
+getwd()
+# -------------------- Setup output dirs --------------------
+dest = "1patch_spin"
+if (!dir.exists(file.path("worldfiles", dest))) dir.create(file.path("worldfiles", dest))
+if (!dir.exists(file.path("flowtables", dest))) dir.create(file.path("flowtables", dest))
+if (!dir.exists(file.path("out", dest))) dir.create(file.path("out", dest))
+
+# -------------------- Read and annotate worldfile --------------------
+world_path = "worldfiles/hpb.world"
+
+world = as.data.table(read_world(world_path, hill_col = TRUE, 
+                                              zone_col = TRUE, 
+                                              patch_col = TRUE))
+
+
+### Find veg IDs 
+# Check what the actual column names are after reading
+message("Columns in world: ", paste(names(world), collapse = ", "))
+
+# Look at what's around veg_parm_ID in the raw worldfile
+world[vars == "veg_parm_ID"]
+
+# The veg parm ID value lives in the 'values' column where vars == "veg_parm_ID"
+veg_ids = unique(world$values[world$vars == "veg_parm_ID"])
+veg_ids = veg_ids[!is.na(veg_ids)]
+message("Veg parm IDs: ", paste(veg_ids, collapse = ", "))
+
+
+# Find the row index of the first veg_parm_ID entry
+# unique_ID at that row gives us the patch to extract
+veg_id_use = veg_ids[1]
+
+
+#Get the stratum-level unique_ID for the first patch with this veg type
+stratum_uid = world[level == "canopy_strata" & 
+                    shift(values, 1L) == veg_id_use, unique_ID][1]
+
+message("Stratum unique_ID: ", stratum_uid)
+
+# Or more reliably — find the patch_ID that contains this veg type
+# then get any unique_ID within that patch
+target_patch_ID = world[vars == "veg_parm_ID" & values == veg_id_use, patch_ID][1]
+message("Target patch_ID: ", target_patch_ID)
+
+# Get unique_ID of any row in that patch at stratum level
+extract_uid = world[patch_ID == target_patch_ID & level == "canopy_strata", unique_ID][1]
+message("Extract unique_ID: ", extract_uid)
+
+patch_world = extract_world(world, extract_uid)
+
+
+# Write single patch worldfile and flowtable
+patch_world_path = file.path("worldfiles", dest, 
+                              paste0("hpb_1patch_vegID", veg_id_use, ".world"))
+patch_flow_path  = file.path("flowtables", dest, 
+                              paste0("hpb_1patch_vegID", veg_id_use, ".flow"))
+
+write_world(patch_world, patch_world_path)
+
+# make_1pflow generates a minimal self-draining flowtable for a single patch
+patch_flow = make_1pflow(patch_world)
+writeLines(patch_flow, patch_flow_path)
+
+# Verify files were written
+message("Patch worldfile: ", patch_world_path)
+message("Patch flowtable: ", patch_flow_path)
+file.exists(c(patch_world_path, patch_flow_path))
+
+
+
+```
+
+
+
+```{r}
+
+library(lhs)          # install.packages("lhs")
+library(RHESSysIOinR)
+library(tidyverse)
+library(data.table)
+
+setwd("repo/HPB_files_NEW")
+
+
+# -------------------- LHS parameter sampling --------------------
+param_ranges = list(
+  epc.root_distrib_parm = c(1,     20),
+  epc.alloc_stemc_leafc = c(1.0,   4.0),
+  epc.livewood_turnover = c(0.1,   1.0),
+  epc.froot_turnover    = c(0.1,   1.0),
+  epc.branch_turnover   = c(0.03,  0.15),
+  epc.leaf_turnover     = c(0.1,   1.0),
+  DOM_decay_rate        = c(0.001, 0.1)
+)
+
+n_params = length(param_ranges)
+n_runs   = 50   # can push to 100+ since 1patch runs are very fast
+
+set.seed(42)
+lhs_raw    = randomLHS(n_runs, n_params)
+lhs_scaled = as.data.frame(lhs_raw)
+colnames(lhs_scaled) = names(param_ranges)
+
+for (p in names(param_ranges)) {
+  lo = param_ranges[[p]][1]
+  hi = param_ranges[[p]][2]
+  lhs_scaled[[p]] = lo + lhs_scaled[[p]] * (hi - lo)
+}
+
+message("LHS design: ", n_runs, " runs x ", n_params, " parameters")
+print(summary(lhs_scaled))
+
+# -------------------- Build inputs --------------------
+# Single patch runs are very fast so can run long — 250 years with climrepeat
+dates = c("1950 1 1 1", "2200 1 2 24")
+name  = "hpb_1patch_lhs"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         = paste0("tecfiles/", name, ".tec"),
+  world_file       = "worldfiles/1patch_spin/hpb_1patch_vegID3.world",
+  world_hdr_prefix = name,
+  flowtable        = "flowtables/1patch_spin/hpb_1patch_vegID3.flow",
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/1patch_spin/",
+  output_prefix    = name,
+  commandline_options = "-b -g -s 0.9 650 -gw 0.1 0.9 -climrepeat"  # -vmort_off    -climrepeat
+)
+
+input_hdr = IOin_hdr(
+  basin        = "defs/basin.def",
+  hillslope    = "defs/hill.def",
+  zone         = "defs/zone.def",
+  soil         = "defs/soil_siltyloam.def",
+  landuse      = "defs/lu_undev.def",
+  stratum      = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], 
+                               output_state = FALSE)
+
+# -------------------- Pass full LHS vectors to run_rhessys_multi --------------------
+pars_list = list(
+  list(input_hdr$stratum_def[1], "epc.root_distrib_parm", lhs_scaled$epc.root_distrib_parm),
+  list(input_hdr$stratum_def[1], "epc.alloc_stemc_leafc",  lhs_scaled$epc.alloc_stemc_leafc),
+  list(input_hdr$stratum_def[1], "epc.livewood_turnover",  lhs_scaled$epc.livewood_turnover),
+  list(input_hdr$stratum_def[1], "epc.froot_turnover",     lhs_scaled$epc.froot_turnover),
+  list(input_hdr$stratum_def[1], "epc.branch_turnover",    lhs_scaled$epc.branch_turnover),
+  list(input_hdr$stratum_def[1], "epc.leaf_turnover",      lhs_scaled$epc.leaf_turnover),
+  list(input_hdr$soil_def[1],    "DOM_decay_rate",          lhs_scaled$DOM_decay_rate)
+)
+
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+# -------------------- Run --------------------
+run_rhessys_multi(
+  input_rhessys    = input_rhessys,
+  hdr_files        = input_hdr,
+  tec_data         = input_tec_data,
+  def_pars         = input_def_pars,
+  output_filter    = NULL,
+  all_combinations = FALSE,
+  return_cmd       = F   # flip to FALSE to run
+)
+
+# Save parameter table
+lhs_scaled |>
+  mutate(run = paste0(name, "_", seq_len(n_runs))) |>
+  write_csv("out/1patch_spin/lhs_1patch_parameter_table.csv")
+
+
+```
+
+
+
+
+
+
+evaluate
+
+```{r}
+name  = "hpb_1patch_lhs"
+
+
+# -------------------- Evaluate results --------------------
+# Reuse the same evaluation code as before, just point at the 1patch output folder
+
+target_plantc = 15
+target_soilc  = 15
+
+out_files = list.files("out/1patch_spin/LHS_trial1", pattern = paste0(name, ".*basin\\.daily$"),
+                        full.names = TRUE)
+out_files = out_files[!grepl("grow", out_files)]
+
+all_ts = map_dfr(out_files, function(f) {
+  run_prefix = gsub("_basin\\.daily$", "", f)
+  run        = gsub(".*/", "", run_prefix)
+  message("Reading: ", run)
+  
+  dat = tryCatch(
+    readin_rhessys_output(run_prefix),
+    error = function(e) { message("Failed: ", e$message); return(NULL) }
+  )
+  if (is.null(dat)) return(NULL)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  out |>
+    select(date, plantc = plantc.x, soilc, lai = lai.x, streamflow) |>
+    mutate(run = run)
+})
+
+
+## Read in param table
+param_table = read_csv("out/1patch_spin/LHS_trial1/lhs_1patch_parameter_table.csv")
+
+### Results sumary
+results = all_ts |>
+  group_by(run) |>
+  slice_tail(n = 365) |>
+  summarise(
+    mean_plantc     = max(plantc,     na.rm = TRUE),
+    mean_soilc      = max(soilc,      na.rm = TRUE),
+    mean_lai        = max(lai,         na.rm = TRUE),
+    mean_streamflow = max(streamflow,  na.rm = TRUE)
+  ) |>
+  left_join(param_table, by = "run") |>
+  mutate(score = abs(mean_plantc - target_plantc) + 
+                 abs(mean_soilc  - target_soilc)) |>
+  arrange(score)
+
+print(head(results, 10))
+
+# -------------------- Time series plot — all runs overlaid --------------------
+# Color by score so best runs stand out
+all_ts |>
+  #filter(date > ymd("2000-01-01")) |> 
+  left_join(results |> select(run, score), by = "run") |>
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, 
+             group = run, color = score)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "Score\n(lower=better)") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "LHS runs — full time series",
+       subtitle = "Brighter lines = closer to target C stocks",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+
+
+# Top 5 trajectories
+top_runs = results$run[1:5]
+
+all_ts |>
+  filter(run %in% top_runs) |>
+  left_join(results |> select(run, score), by = "run") |>
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, color = run)) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "Top 5 single-patch LHS runs",
+       x = "Date", y = NULL) +
+  theme_bw()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

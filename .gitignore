@@ -5,4 +5,13 @@
 RHESSys_Tutorial.Rproj
 HPB_files/out/
 GRASS*
-
+HPB_files_SmallPatch/
+Spatial_Data/Inputs/NLCD*
+CCR_files/
+HPB_files_NEW/out/
+HPB_files_NEW/spatial_data/
+HPB_files_NEW/worldfiles/
+HPB_files_NEW/flowtables/
+HPB_files_NEW/defs/
+HPB_files_NEW/clim/
+HPB_files_NEW/tecfiles/

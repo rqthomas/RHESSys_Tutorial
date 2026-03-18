@@ -1,0 +1,721 @@
+---
+title: "HPB_spinup"
+output: html_document
+date: "2026-03-12"
+---
+
+## set up docker container: run this in the powershell
+docker run -v C:/Users/dwh18/OneDrive/Desktop/R_projects/RHESSys_Tutorial:/RHESSys/repo -it rhessys/rhessys:develop
+
+
+## Function to look at outputs
+
+```{r}
+
+#read in validation csv
+target_df <- read_csv("../Target_Data_comp/TargetData_15mar26.csv") |> 
+  rename(date = Date)
+
+##function to read in and plot quickly
+#libraries
+library(RHESSysIOinR)
+library(tidyverse)
+#unit conversion functions
+source("../Unit_Conversions.R")
+
+#make function
+read_plot_rhessys = function(outname, date_filter = NULL, ncol = 3,
+                              vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
+                                       "streamflow", "unsat_stor", "sat_def",
+                                       "streamflow_DON", "streamflow_DOC", "streamflow_NO3")) {
+  
+  dat = readin_rhessys_output(outname)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  
+  if (!is.null(date_filter)) out = out |> filter(date > date_filter)
+  
+  out |>
+    select(date, year, yd, any_of(vars)) |>
+    mutate(soil_moisture =  sat_def - unsat_stor) |> 
+    mutate(streamflow_L_s = mm_to_Ls(streamflow, 4.299446), #HPB area is 4.299446 km^2
+           DOC_mgL = gm2day_to_mgL(streamflow_DOC, streamflow),
+           NO3_mgL = gm2day_to_mgL(streamflow_NO3, streamflow)) |> 
+    pivot_longer(-c(date, year, yd)) |>
+    ggplot(aes(x = date, y = value)) +
+    geom_point() +
+    facet_wrap(~name, scales = "free_y", ncol = ncol) +
+    labs(title = outname, x = "Date", y = NULL) +
+    theme_bw()
+}
+
+# read_plot_rhessys(outname = "out/Trial1/HPB_spinup350yr_multi_run1", date_filter = NULL)
+
+# #make function
+# read_plot_validate_rhessys = function(outname, target_data, date_filter = NULL, ncol = 3,
+#                               vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
+#                                        "streamflow", "unsat_stor", "sat_def",
+#                                        "streamflow_DON", "streamflow_DOC", "streamflow_NO3")) {
+#   
+#   dat = readin_rhessys_output(outname)
+#   
+#   out = left_join(dat$bd, dat$bdg,
+#                   by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+#   
+#   
+#   out_target <- left_join(out, target_data, by = c("date"))
+#   
+# 
+#   out_target |>
+#     select(date, year, yd, any_of(vars)) |>
+#     mutate(soil_moisture =  sat_def - unsat_stor) |> 
+#     mutate(streamflow_L_s = mm_to_Ls(streamflow, 4.299446), #HPB area is 4.299446 km^2
+#            DOC_mgL = gm2day_to_mgL(streamflow_DOC, streamflow),
+#            NO3_mgL = gm2day_to_mgL(streamflow_NO3, streamflow)) |> 
+#     pivot_longer(-c(date, year, yd)) |>
+#     ggplot(aes(x = date, y = value)) +
+#     geom_point() +
+#     facet_wrap(~name, scales = "free_y", ncol = ncol) +
+#     labs(title = outname, x = "Date", y = NULL) +
+#     theme_bw()
+# }
+
+```
+
+
+new function with validation option
+
+```{r}
+read_plot_rhessys = function(outname, date_filter = NULL, ncol = 3, validate = FALSE,
+                              vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
+                                       "streamflow", "unsat_stor", "sat_def",
+                                       "streamflow_DON", "streamflow_DOC", "streamflow_NO3")) {
+  
+  dat = readin_rhessys_output(outname)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  
+  if (!is.null(date_filter)) out = out |> filter(date > date_filter)
+  
+  # Base model output with unit conversions
+  out_processed = out |>
+    select(date, year, yd, any_of(vars)) |>
+    mutate(
+      soil_moisture    = sat_def - unsat_stor,
+      streamflow_L_s   = mm_to_Ls(streamflow, 4.299446),
+      DOC_mgL          = gm2day_to_mgL(streamflow_DOC, streamflow),
+      NO3_mgL          = gm2day_to_mgL(streamflow_NO3, streamflow)
+    )
+  
+  # -------------------- Standard plot (validate = FALSE) --------------------
+  if (!validate) {
+    out_processed |>
+      pivot_longer(-c(date, year, yd)) |>
+      ggplot(aes(x = date, y = value)) +
+      geom_point(size = 0.5) +
+      facet_wrap(~name, scales = "free_y", ncol = ncol) +
+      labs(title = outname, x = "Date", y = NULL) +
+      theme_bw()
+    
+  # -------------------- Validation plot (validate = TRUE) --------------------
+  } else {
+    
+    # if (!file.exists("target_data.csv")) {
+    #   stop("target_data.csv not found in working directory: ", getwd())
+    # }
+    # 
+    # target = read_csv("target_data.csv", show_col_types = FALSE) |>
+    #   mutate(date = as.Date(date))
+    
+    target <- target_df
+    
+    val_start = as.Date("2020-01-01")
+    val_end   = as.Date("2026-12-31")
+    
+    # -------------------- Plot 1: Multi-variable validation --------------------
+    # Uses Q_L_s_Flowmate as the streamflow target
+    modeled_long = out_processed |>
+      filter(date >= val_start, date <= val_end) |>
+      select(date,
+             lai     = lai.x,
+             DOC_mgL,
+             NO3_mgL,
+             Q_L_s   = streamflow_L_s) |>
+      pivot_longer(-date, names_to = "variable", values_to = "modeled")
+    
+    target_long = target |>
+      filter(date >= val_start, date <= val_end) |>
+      select(date,
+             lai     = lai_MODIS,
+             DOC_mgL,
+             NO3_mgL,
+             Q_L_s   = Q_L_s_Flowmate) |>   # Flowmate for main validation plot
+      pivot_longer(-date, names_to = "variable", values_to = "observed")
+    
+    combined = left_join(modeled_long, target_long, by = c("date", "variable"))
+    
+    p1 = ggplot(combined, aes(x = date)) +
+      geom_line(aes(y = modeled, color = "Modeled"), linewidth = 0.5) +
+      geom_point(aes(y = observed, color = "Observed"), size = 1.5, na.rm = TRUE) +
+      scale_color_manual(values = c("Modeled"  = "steelblue",
+                                     "Observed" = "firebrick")) +
+      facet_wrap(~variable, scales = "free_y", ncol = 2) +
+      labs(title    = paste("Validation:", outname),
+           subtitle = paste("Flowmate Q |", val_start, "to", val_end),
+           x = "Date", y = NULL, color = NULL) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+    
+    # -------------------- Plot 2: PT streamflow only from 2024 --------------------
+    pt_start = as.Date("2024-01-01")
+    
+    modeled_q = out_processed |>
+      filter(date >= pt_start, date <= val_end) |>
+      select(date, Q_L_s = streamflow_L_s)
+    
+    target_q = target |>
+      filter(date >= pt_start, date <= val_end) |>
+      select(date, Q_L_s_PT)
+    
+    combined_q = left_join(modeled_q, target_q, by = "date")
+    
+    p2 = ggplot(combined_q, aes(x = date)) +
+      geom_line(aes(y = Q_L_s, color = "Modeled"), linewidth = 0.5) +
+      geom_line(aes(y = Q_L_s_PT, color = "Observed (PT)"), 
+                 size = 0.5, na.rm = TRUE) +
+      scale_color_manual(values = c("Modeled"       = "steelblue",
+                                     "Observed (PT)" = "firebrick")) +
+      labs(title    = paste("Streamflow validation:", outname),
+           subtitle = paste("PT gauge | 2024 onwards"),
+           x = "Date", y = "Q (L/s)", color = NULL) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+    
+    # Print both plots
+    print(p1)
+    print(p2)
+  }
+}
+
+# -------------------- Usage --------------------
+# #Standard plot
+# read_plot_rhessys("out/Spin/Spin1/HPB_spinup250yr")
+# 
+# # Validation plot
+# read_plot_rhessys("out/Spin/Spin1/HPB_spinup250yr", validate = TRUE)
+# 
+# # With date filter on the standard plot
+# read_plot_rhessys("out/HPB_spinup50yr", date_filter = ymd("2000-01-01"))
+
+```
+
+
+
+
+## run using run_rhessys command 
+this is for HPB_files_NEW folder that uses the kmeans500 patches 
+
+```{r}
+#Can run all of this within the Docker container after opening R
+
+setwd("repo/HPB_files_NEW")
+library(RHESSysIOinR)
+
+dates = c("1950 1 1 1", "2200 1 2 24") #has to end with a 24 hour so that the tec output will work
+
+name = "hpb_spinup_Hydro"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
+  world_file       = "worldfiles/hpb.world", #what was made in pre-processing
+  world_hdr_prefix = "hpb_spintest",
+  flowtable        = "flowtables/hpb.flow", #what was made in pre-processing
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/Spin/",
+  output_prefix    = "HPB_spinup250yr",
+  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+)
+
+#header directly copied from hpb.hdr
+input_hdr = IOin_hdr(
+  basin      = "defs/basin.def",
+  hillslope  = "defs/hill.def",
+  zone       = "defs/zone.def",
+  soil       = "defs/soil_siltyloam.def",
+  landuse    = "defs/lu_undev.def",
+  stratum    = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+#set param list
+pars_list = list(
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 0.108),
+  list(input_hdr$soil_def[1], "Ksat_0",  404.3),
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0.1),
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0.9),
+  
+  #tweak growth params
+  list(input_hdr$stratum_def[1], "epc.leaf_turnover", c(0.8)) #1 is default
+  
+  # epc.root_distrib_parm = c(8,    12),   # 8 is veg decid default; 19 is github; 8 seemed good
+  # epc.proj_sla         = c(25,    40),    # def is 32 in decid; 9 is git default specific leaf area. 
+  # some other values to play with 
+  # epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1; 0 is in both defs
+  # epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  # epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  # epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more 
+    )
+
+# #set up manually tweak params for rhessys format; can also put multi here  #when you run this it will generate new folders within def called zone, soil, etc, that have updated def file values, but doesn't change original files
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+
+#make tec file locally
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], output_state = T)
+
+
+#run model with inputs defined above
+run_rhessys_single(
+  input_rhessys = input_rhessys,
+  hdr_files     = input_hdr,
+  tec_data      = input_tec_data, #can be NULL if calling a local file and not using IOin_tec_std
+  def_pars      = input_def_pars,
+  output_filter = NULL, #cant get any version working currently so using legacy output
+  return_cmd    = F   # flip to FALSE to run
+)
+
+
+#run for multi param
+# run_rhessys_multi(
+#   input_rhessys   = input_rhessys,
+#   hdr_files       = input_hdr,
+#   tec_data        = input_tec_data,
+#   def_pars        = input_def_pars,
+#   output_filter   = NULL,
+#   all_combinations = FALSE,   # paired not grid; grid would run all combos of inputs list
+#   return_cmd      = F
+# )
+
+
+```
+
+
+
+
+## Look at first spin output
+
+```{r}
+
+read_plot_rhessys(outname = "out/Spin/HPB_spinup250yr", 
+                  date_filter = ymd("1970-01-01") ) # NULL is default ymd("2000-01-01")
+
+
+```
+
+
+
+## Spin off the spinup
+
+```{r}
+#Can run all of this within the Docker container after opening R
+
+setwd("repo/HPB_files_NEW")
+library(RHESSysIOinR)
+
+dates = c("1950 1 1 1", "2200 1 2 24") #has to end with a 24 hour so that the tec output will work
+
+name = "hpb_spinup_Hydro"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
+  world_file       = "worldfiles/Basin_spin/hpb.world.Y2200M1D2H23.state", #what was made in pre-processing
+  world_hdr_prefix = "hpb_spintest",
+  flowtable        = "flowtables/hpb.flow", #what was made in pre-processing
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/Spin/Spin2/",
+  output_prefix    = "HPB_spinup250yr",
+  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+)
+
+#header directly copied from hpb.hdr
+input_hdr = IOin_hdr(
+  basin      = "defs/basin.def",
+  hillslope  = "defs/hill.def",
+  zone       = "defs/zone.def",
+  soil       = "defs/soil_siltyloam.def",
+  landuse    = "defs/lu_undev.def",
+  stratum    = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+#set param list
+pars_list = list(
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 0.108),
+  list(input_hdr$soil_def[1], "Ksat_0",  404.3),
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0.1),
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0.9),
+  
+  #tweak growth params
+  list(input_hdr$stratum_def[1], "epc.leaf_turnover", c(0.8)) #1 is default
+  
+  # epc.root_distrib_parm = c(8,    12),   # 8 is veg decid default; 19 is github; 8 seemed good
+  # epc.proj_sla         = c(25,    40),    # def is 32 in decid; 9 is git default specific leaf area. 
+  # some other values to play with 
+  # epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1; 0 is in both defs
+  # epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  # epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  # epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more 
+    )
+
+# #set up manually tweak params for rhessys format; can also put multi here  #when you run this it will generate new folders within def called zone, soil, etc, that have updated def file values, but doesn't change original files
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+
+#make tec file locally
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], output_state = T)
+
+
+#run model with inputs defined above
+run_rhessys_single(
+  input_rhessys = input_rhessys,
+  hdr_files     = input_hdr,
+  tec_data      = input_tec_data, #can be NULL if calling a local file and not using IOin_tec_std
+  def_pars      = input_def_pars,
+  output_filter = NULL, #cant get any version working currently so using legacy output
+  return_cmd    = F   # flip to FALSE to run
+)
+
+```
+
+
+##look at second spin
+
+```{r}
+#Standard plot
+read_plot_rhessys("out/Spin/Spin2/HPB_spinup250yr", date_filter = NULL)
+
+# Validation plot
+read_plot_rhessys("out/Spin/Spin2/HPB_spinup250yr", validate = TRUE)
+
+```
+
+
+
+## Try running for just several years off of each worldfile state
+
+Frist spinup
+
+```{r}
+#Can run all of this within the Docker container after opening R
+
+setwd("repo/HPB_files_NEW")
+library(RHESSysIOinR)
+
+dates = c("2018 1 1 1", "2026 1 2 24") #has to end with a 24 hour so that the tec output will work
+
+name = "hpb_spinup_Hydro"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
+  world_file       = "worldfiles/Basin_spin/hpb.world.Y2200M1D2H23.state", #what was made in pre-processing
+  world_hdr_prefix = "hpb_spintest",
+  flowtable        = "flowtables/hpb.flow", #what was made in pre-processing
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/Spin/Spin_valid1/",
+  output_prefix    = "HPB_spinup250yr",
+  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+)
+
+#header directly copied from hpb.hdr
+input_hdr = IOin_hdr(
+  basin      = "defs/basin.def",
+  hillslope  = "defs/hill.def",
+  zone       = "defs/zone.def",
+  soil       = "defs/soil_siltyloam.def",
+  landuse    = "defs/lu_undev.def",
+  stratum    = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+#set param list
+pars_list = list(
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 0.108),
+  list(input_hdr$soil_def[1], "Ksat_0",  404.3),
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0.1),
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0.9),
+  
+  #tweak growth params
+  list(input_hdr$stratum_def[1], "epc.leaf_turnover", c(0.8)) #1 is default
+  
+  # epc.root_distrib_parm = c(8,    12),   # 8 is veg decid default; 19 is github; 8 seemed good
+  # epc.proj_sla         = c(25,    40),    # def is 32 in decid; 9 is git default specific leaf area. 
+  # some other values to play with 
+  # epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1; 0 is in both defs
+  # epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  # epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  # epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more 
+    )
+
+# #set up manually tweak params for rhessys format; can also put multi here  #when you run this it will generate new folders within def called zone, soil, etc, that have updated def file values, but doesn't change original files
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+
+#make tec file locally
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], output_state = F)
+
+
+#run model with inputs defined above
+run_rhessys_single(
+  input_rhessys = input_rhessys,
+  hdr_files     = input_hdr,
+  tec_data      = input_tec_data, #can be NULL if calling a local file and not using IOin_tec_std
+  def_pars      = input_def_pars,
+  output_filter = NULL, #cant get any version working currently so using legacy output
+  return_cmd    = F   # flip to FALSE to run
+)
+
+```
+
+
+
+```{r}
+#Standard plot
+read_plot_rhessys("out/Spin/Spin_valid1/HPB_spinup250yr", date_filter = NULL)
+
+# Validation plot
+read_plot_rhessys("out/Spin/Spin_valid1/HPB_spinup250yr", validate = TRUE)
+
+```
+
+
+
+
+
+### LHS based params from L5
+
+```{r}
+
+#Can run all of this within the Docker container after opening R
+
+setwd("repo/HPB_files_NEW")
+library(RHESSysIOinR)
+
+dates = c("1950 1 1 1", "2400 1 2 24") #has to end with a 24 hour so that the tec output will work
+
+name = "hpb_spinup_Hydro"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
+  world_file       = "worldfiles/hpb.world.Y2400M1D2H23.state", #what was made in pre-processing
+  world_hdr_prefix = "hpb_spintest",
+  flowtable        = "flowtables/hpb.flow", #what was made in pre-processing
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/Spin/Spin4/",
+  output_prefix    = "HPB_spinup450yr",
+  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+)
+
+#header directly copied from hpb.hdr
+input_hdr = IOin_hdr(
+  basin      = "defs/basin.def",
+  hillslope  = "defs/hill.def",
+  zone       = "defs/zone.def",
+  soil       = "defs/soil_siltyloam.def",
+  landuse    = "defs/lu_undev.def",
+  stratum    = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+#set param list
+pars_list = list(
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 0.108),
+  list(input_hdr$soil_def[1], "Ksat_0",  404.3),
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0.1),
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0.9),
+  
+  #tweak growth params
+  #These are *I think* from LHS t5~
+  list(input_hdr$stratum_def[1], "epc.root_distrib_parm", c(12)),  
+  list(input_hdr$stratum_def[1], "epc.alloc_stemc_leafc", c(3)), 
+  list(input_hdr$stratum_def[1], "epc.livewood_turnover", c(0.25)),
+  list(input_hdr$stratum_def[1], "epc.froot_turnover", c(0.8)),
+  list(input_hdr$stratum_def[1], "epc.branch_turnover", c(0.03)),
+  list(input_hdr$stratum_def[1], "DOM_decay_rate", c(0.05))
+  
+  # epc.root_distrib_parm = c(8,    12),   # 8 is veg decid default; 19 is github; 8 seemed good
+  # epc.proj_sla         = c(25,    40),    # def is 32 in decid; 9 is git default specific leaf area. 
+  # some other values to play with 
+  # epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1; 0 is in both defs
+  # list(input_hdr$stratum_def[1], "epc.leaf_turnover", c(0.8)), #1 is default
+  # epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  # epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  # epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more 
+    )
+
+# #set up manually tweak params for rhessys format; can also put multi here  #when you run this it will generate new folders within def called zone, soil, etc, that have updated def file values, but doesn't change original files
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+
+#make tec file locally
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], output_state = T)
+
+
+#run model with inputs defined above
+run_rhessys_single(
+  input_rhessys = input_rhessys,
+  hdr_files     = input_hdr,
+  tec_data      = input_tec_data, #can be NULL if calling a local file and not using IOin_tec_std
+  def_pars      = input_def_pars,
+  output_filter = NULL, #cant get any version working currently so using legacy output
+  return_cmd    = F   # flip to FALSE to run
+)
+
+
+```
+
+
+```{r}
+#Standard plot
+read_plot_rhessys("out/Spin/Spin4/HPB_spinup450yr", date_filter = NULL)
+
+# Validation plot
+read_plot_rhessys("out/Spin/Spin3/HPB_spinup450yr", validate = TRUE)
+
+```
+
+
+
+
+## Try running for just several years off of each worldfile state
+
+Frist spinup
+
+```{r}
+#Can run all of this within the Docker container after opening R
+
+setwd("repo/HPB_files_NEW")
+library(RHESSysIOinR)
+
+dates = c("2018 1 1 1", "2026 1 2 24") #has to end with a 24 hour so that the tec output will work
+
+name = "hpb_spinup_Hydro"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
+  world_file       = "worldfiles/hpb.world.Y2400M1D2H23.state.Y2400M1D2H23.state", #what was made in pre-processing
+  world_hdr_prefix = "hpb_spintest",
+  flowtable        = "flowtables/hpb.flow", #what was made in pre-processing
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/Spin/Spin_valid2/",
+  output_prefix    = "HPB_spinup450yr",
+  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+)
+
+#header directly copied from hpb.hdr
+input_hdr = IOin_hdr(
+  basin      = "defs/basin.def",
+  hillslope  = "defs/hill.def",
+  zone       = "defs/zone.def",
+  soil       = "defs/soil_siltyloam.def",
+  landuse    = "defs/lu_undev.def",
+  stratum    = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+#set param list
+pars_list = list(
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 0.108),
+  list(input_hdr$soil_def[1], "Ksat_0",  404.3),
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0.1),
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0.9),
+  
+  #tweak growth params
+  #These are *I think* from LHS t5~
+  list(input_hdr$stratum_def[1], "epc.root_distrib_parm", c(12)),  
+  list(input_hdr$stratum_def[1], "epc.alloc_stemc_leafc", c(3)), 
+  list(input_hdr$stratum_def[1], "epc.livewood_turnover", c(0.25)),
+  list(input_hdr$stratum_def[1], "epc.froot_turnover", c(0.8)),
+  list(input_hdr$stratum_def[1], "epc.branch_turnover", c(0.03)),
+  list(input_hdr$stratum_def[1], "DOM_decay_rate", c(0.05))
+  # epc.root_distrib_parm = c(8,    12),   # 8 is veg decid default; 19 is github; 8 seemed good
+  # epc.proj_sla         = c(25,    40),    # def is 32 in decid; 9 is git default specific leaf area. 
+  # some other values to play with 
+  # epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1; 0 is in both defs
+  # epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  # epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  # epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more 
+    )
+
+# #set up manually tweak params for rhessys format; can also put multi here  #when you run this it will generate new folders within def called zone, soil, etc, that have updated def file values, but doesn't change original files
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+
+#make tec file locally
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], output_state = F)
+
+
+#run model with inputs defined above
+run_rhessys_single(
+  input_rhessys = input_rhessys,
+  hdr_files     = input_hdr,
+  tec_data      = input_tec_data, #can be NULL if calling a local file and not using IOin_tec_std
+  def_pars      = input_def_pars,
+  output_filter = NULL, #cant get any version working currently so using legacy output
+  return_cmd    = F   # flip to FALSE to run
+)
+
+```
+
+
+
+```{r}
+#Standard plot
+read_plot_rhessys("out/Spin/Spin_valid2/HPB_spinup450yr", date_filter = NULL)
+
+# Validation plot
+read_plot_rhessys("out/Spin/Spin_valid2/HPB_spinup450yr", validate = TRUE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

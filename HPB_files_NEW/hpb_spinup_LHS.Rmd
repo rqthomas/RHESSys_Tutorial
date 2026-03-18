@@ -310,7 +310,7 @@ library(RHESSysIOinR)
 # Find only the non-grow basin daily files to get base prefixes
 
 #### UPDATE FILE PATH
-out_files = list.files("out/LHS_T1", pattern = "hpb_LHS_run.*basin\\.daily$", 
+out_files = list.files("out/LHS_trial5", pattern = "hpb_lhs_run.*basin\\.daily$", 
                         full.names = TRUE)
 out_files = out_files[!grepl("grow", out_files)]  # exclude the grow files
 
@@ -356,7 +356,7 @@ all_ts = map_dfr(out_files, function(f) {
 
 # -------------------- Read data --------------------
 #### UPDATE FILE PATH
-param_table = read_csv("out/LHS_T1/lhs_parameter_table.csv")
+param_table = read_csv("out/LHS_trial5/lhs_parameter_table.csv")
 
 
 # -------------------- Scoring table (unchanged) --------------------
@@ -443,6 +443,26 @@ all_ts |>
 
 ```
 
+
+```{r}
+all_ts |>
+  filter(date > ymd("2200-01-01")) |> 
+  filter(streamflow_DOC < 0.1) |> 
+  left_join(results |> select(run, score), by = "run") |>
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow_DOC, streamflow, soil_moisture),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, 
+             group = run, color = score)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "Score\n(lower=better)") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "LHS runs — full time series",
+       subtitle = "Brighter lines = closer to target C stocks",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+```
 
 
 

@@ -8,8 +8,8 @@ date: "2026-03-12"
 docker run -v C:/Users/dwh18/OneDrive/Desktop/R_projects/RHESSys_Tutorial:/RHESSys/repo -it rhessys/rhessys:develop
 
 
-## Function to look at outputs
-
+##new function to read in results with validation option
+This would be run locally to look at outputs
 ```{r}
 
 #read in validation csv
@@ -23,70 +23,8 @@ library(tidyverse)
 #unit conversion functions
 source("../Unit_Conversions.R")
 
-#make function
-read_plot_rhessys = function(outname, date_filter = NULL, ncol = 3,
-                              vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
-                                       "streamflow", "unsat_stor", "sat_def",
-                                       "streamflow_DON", "streamflow_DOC", "streamflow_NO3")) {
-  
-  dat = readin_rhessys_output(outname)
-  
-  out = left_join(dat$bd, dat$bdg,
-                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
-  
-  if (!is.null(date_filter)) out = out |> filter(date > date_filter)
-  
-  out |>
-    select(date, year, yd, any_of(vars)) |>
-    mutate(soil_moisture =  sat_def - unsat_stor) |> 
-    mutate(streamflow_L_s = mm_to_Ls(streamflow, 4.299446), #HPB area is 4.299446 km^2
-           DOC_mgL = gm2day_to_mgL(streamflow_DOC, streamflow),
-           NO3_mgL = gm2day_to_mgL(streamflow_NO3, streamflow)) |> 
-    pivot_longer(-c(date, year, yd)) |>
-    ggplot(aes(x = date, y = value)) +
-    geom_point() +
-    facet_wrap(~name, scales = "free_y", ncol = ncol) +
-    labs(title = outname, x = "Date", y = NULL) +
-    theme_bw()
-}
 
-# read_plot_rhessys(outname = "out/Trial1/HPB_spinup350yr_multi_run1", date_filter = NULL)
-
-# #make function
-# read_plot_validate_rhessys = function(outname, target_data, date_filter = NULL, ncol = 3,
-#                               vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
-#                                        "streamflow", "unsat_stor", "sat_def",
-#                                        "streamflow_DON", "streamflow_DOC", "streamflow_NO3")) {
-#   
-#   dat = readin_rhessys_output(outname)
-#   
-#   out = left_join(dat$bd, dat$bdg,
-#                   by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
-#   
-#   
-#   out_target <- left_join(out, target_data, by = c("date"))
-#   
-# 
-#   out_target |>
-#     select(date, year, yd, any_of(vars)) |>
-#     mutate(soil_moisture =  sat_def - unsat_stor) |> 
-#     mutate(streamflow_L_s = mm_to_Ls(streamflow, 4.299446), #HPB area is 4.299446 km^2
-#            DOC_mgL = gm2day_to_mgL(streamflow_DOC, streamflow),
-#            NO3_mgL = gm2day_to_mgL(streamflow_NO3, streamflow)) |> 
-#     pivot_longer(-c(date, year, yd)) |>
-#     ggplot(aes(x = date, y = value)) +
-#     geom_point() +
-#     facet_wrap(~name, scales = "free_y", ncol = ncol) +
-#     labs(title = outname, x = "Date", y = NULL) +
-#     theme_bw()
-# }
-
-```
-
-
-new function with validation option
-
-```{r}
+#function
 read_plot_rhessys = function(outname, date_filter = NULL, ncol = 3, validate = FALSE,
                               vars = c("lai.x", "plantc.x", "soilc", "plantn", "soiln",
                                        "streamflow", "unsat_stor", "sat_def",
@@ -214,8 +152,10 @@ read_plot_rhessys = function(outname, date_filter = NULL, ncol = 3, validate = F
 
 
 
-## run using run_rhessys command 
+## run model using run_rhessys command 
 this is for HPB_files_NEW folder that uses the kmeans500 patches 
+
+All the code below would be run in the docker after opening with the line at the top of the script
 
 ```{r}
 #Can run all of this within the Docker container after opening R
@@ -237,7 +177,7 @@ input_rhessys = IOin_rhessys_input(
   end              = dates[2],
   output_folder    = "out/Spin/",
   output_prefix    = "HPB_spinup250yr",
-  commandline_options = "-b -g -climrepeat"  #having these set as nothing seems to not let anything grow
+  commandline_options = "-b -g -climrepeat"  
 )
 
 #header directly copied from hpb.hdr

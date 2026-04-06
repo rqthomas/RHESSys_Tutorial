@@ -27,31 +27,40 @@ generate_streamtable <- function(
   n_reaches <- length(reach_ids)
   message("Found ", n_reaches, " stream reaches.")
 
-  # Build reach topology from DEM
-  get_downstream_reach <- function(rid) {
+  # Mean elevation per reach — used to determine upstream/downstream direction
+  reach_elev <- sapply(reach_ids, function(rid) {
     cells <- which(values(stream) == rid)
-    elev_vals <- values(dem)[cells]
-    outlet_cell <- cells[which.min(elev_vals)]
+    mean(values(dem)[cells], na.rm = TRUE)
+  })
+  names(reach_elev) <- reach_ids
 
-    visited <- c()
-    current <- outlet_cell
-    for (i in 1:20) {
-      nbrs <- adjacent(stream, current, directions = 8)[1, ]
+  # Build reach topology using mean elevation comparison.
+  # For each reach, find all spatially adjacent reaches; those with lower mean
+  # elevation are downstream candidates. Pick the highest among them (nearest).
+  # If none are lower, this reach is the outlet.
+  get_downstream_reach <- function(rid) {
+    reach_cells <- which(values(stream) == rid)
+
+    # All stream cells directly adjacent (8-connected) to this reach
+    adj_stream_cells <- unique(unlist(lapply(reach_cells, function(cell) {
+      nbrs <- adjacent(stream, cell, directions = 8)[1, ]
       nbrs <- nbrs[!is.na(nbrs)]
-      nbr_reach_ids <- values(stream)[nbrs]
+      nbrs[!is.na(values(stream)[nbrs]) & values(stream)[nbrs] != rid]
+    })))
 
-      different <- nbrs[!is.na(nbr_reach_ids) & nbr_reach_ids != rid]
-      if (length(different) > 0) {
-        return(values(stream)[different[1]])
-      }
+    if (length(adj_stream_cells) == 0) return(NA)
 
-      nbr_elevs <- values(dem)[nbrs]
-      if (all(is.na(nbr_elevs))) break
-      current <- nbrs[which.min(nbr_elevs)]
-      if (current %in% visited) break
-      visited <- c(visited, current)
-    }
-    return(NA)
+    adj_ids <- unique(na.omit(values(stream)[adj_stream_cells]))
+    if (length(adj_ids) == 0) return(NA)
+
+    my_elev <- reach_elev[as.character(rid)]
+    downstream_candidates <- adj_ids[reach_elev[as.character(adj_ids)] < my_elev]
+
+    if (length(downstream_candidates) == 0) return(NA)  # this is the outlet
+
+    # Among candidates, take the one with the highest elevation (most direct)
+    best <- downstream_candidates[which.max(reach_elev[as.character(downstream_candidates)])]
+    return(best)
   }
 
   message("Building reach topology...")
@@ -149,7 +158,7 @@ generate_streamtable(
   zone_rast     = "./HPB_files_NewMaps/spatial_data/hpb_patch_map.tif",  # zone = patch
   subbasin_rast = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",
   hill_rast     = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",  # hill = subbasin
-  output_file   = "./HPB_files_NewMaps/stream.hpb",
+  output_file   = "./HPB_files_NewMaps/worldfiles/flowtables/stream.hpb",
   ManningsN      = 0.035,
   streamTopWidth = 3.0,
   streamBotWidth = 1.5,

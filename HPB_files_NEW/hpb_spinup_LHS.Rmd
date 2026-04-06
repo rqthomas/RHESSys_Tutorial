@@ -467,3 +467,725 @@ all_ts |>
 
 
 
+
+##### Mega LHS
+expanding range of params and values were going across gonna do 48 iterations
+
+
+```{r}
+
+library(lhs)          # install.packages("lhs")
+library(RHESSysIOinR)
+library(tidyverse)
+library(data.table)
+
+setwd("repo/HPB_files_NEW")
+
+
+# -------------------- Define parameter ranges --------------------
+param_ranges = list(
+  ##hydro (note three are in soil def one in hillsope)
+  # m                  = c(0.05,     2),  #0.12
+  # Ksat_0            = c(1,   600),  # 0.622
+  # sat_to_gw_coeff   = c(0,   1), # 1
+  # gw_loss_coeff     = c(0,   1),  # 1; 0 in testing?
+  
+  ##veg (veg def)
+  # P0 from will
+  epc.root_distrib_parm = c(6,    20),   # 8 is veg decid default; 19 is github
+  epc.min_percent_leafg = c(0,  2),          # def = 1; git says 0.01 to 0.001
+  epc.branch_turnover   = c(0.03, 0.04),   # 0 to 1
+  epc.froot_turnover    = c(0.6,  0.9),    # def = 1; 0 to 1
+  epc.leaf_turnover     = c(0.1,   1.0),  # def = 1; 0 to 1
+  epc.livewood_turnover = c(0.15, 0.35),  #def = 0.7; 0 to 1
+  epc.gl_c              = c(0.00004, 0.00008),      #def is 0.00006; no range given.         leafscale cuticular conductance
+  epc.gl_smax          = c(0.004, 0.009), # def is 0.006;  no range given.         stomatal conductance → more CO2 uptake
+  epc.proj_sla         = c(1,    60),    # def is 32 in decid; 9 is git default specific leaf area → more leaf area per C
+  #DWH added
+  epc.alloc_stemc_leafc = c(1, 5),  #def = 2.2; git = 1.62
+  epc.flnr             = c(0.05,  0.3),   # def and git say just 0.1 Rubisco efficiency → more C fixation
+  epc.alloc_frootc_leafc = c(0.8, 1.6), # 1.2 and 1.325 by def and git less to fine roots = more structural C
+  
+  ##soil (soil def)
+  DOM_decay_rate        = c(0.01, 0.1),  #0.05
+  NO3_adsorption_rate   = c(0, 1),       #0
+  N_decay               = c(0.05, 0.3), #0.12
+  DON_production_rate   = c(0.1, 0.5)   #0.3
+  )
+
+n_params = length(param_ranges)
+n_runs   = 48  #have 14 cores to work with; have been running in batches of 12 for this
+
+# -------------------- Generate LHS design --------------------
+set.seed(42)
+lhs_raw    = randomLHS(n_runs, n_params)
+lhs_scaled = as.data.frame(lhs_raw)
+colnames(lhs_scaled) = names(param_ranges)
+
+for (p in names(param_ranges)) {
+  lo = param_ranges[[p]][1]
+  hi = param_ranges[[p]][2]
+  lhs_scaled[[p]] = lo + lhs_scaled[[p]] * (hi - lo)
+}
+
+print(head(lhs_scaled))
+print(summary(lhs_scaled))
+
+# -------------------- Setup --------------------
+
+dates          = c("1950 1 1 1", "2400 1 2 24")
+name           = "hpb_LHSmega450"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         = paste0("tecfiles/", name, ".tec"),
+  world_file       = "worldfiles/hpb.world",
+  world_hdr_prefix = name,
+  flowtable        = "flowtables/hpb.flow",
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/LHSmega1",
+  output_prefix    = name,
+  commandline_options = "-b -g -climrepeat"
+)
+
+input_hdr = IOin_hdr(
+  basin        = "defs/basin.def",
+  hillslope    = "defs/hill.def",
+  zone         = "defs/zone.def",
+  soil         = "defs/soil_siltyloam.def",
+  landuse      = "defs/lu_undev.def",
+  stratum      = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2], 
+                               output_state = FALSE)
+
+# -------------------- Pass full vectors to run_rhessys_multi --------------------
+# No [i] indexing — pass the entire column as a vector
+pars_list = list(
+  
+  ## set hydro parameters
+  list(input_hdr$soil_def[1], "m", 1),  #0.108
+  list(input_hdr$soil_def[1], "Ksat_0",  10),  #404.3
+  list(input_hdr$soil_def[1], "sat_to_gw_coeff",  0), #0.1
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff", 0), #0.9
+  # list(input_hdr$soil_def[1], "m", lhs_scaled$m),
+  # list(input_hdr$soil_def[1], "Ksat_0",  lhs_scaled$Ksat_0),
+  # list(input_hdr$soil_def[1], "sat_to_gw_coeff",  lhs_scaled$sat_to_gw_coeff),
+  # list(input_hdr$hillslope_def[1], "gw_loss_coeff", lhs_scaled$gw_loss_coeff),
+
+  ## sampled LHS veg params
+  list(input_hdr$stratum_def[1], "epc.root_distrib_parm", lhs_scaled$epc.root_distrib_parm),
+  list(input_hdr$stratum_def[1], "epc.min_percent_leafg", lhs_scaled$epc.min_percent_leafg),
+  list(input_hdr$stratum_def[1], "epc.branch_turnover",    lhs_scaled$epc.branch_turnover),
+  list(input_hdr$stratum_def[1], "epc.froot_turnover",     lhs_scaled$epc.froot_turnover),
+  list(input_hdr$stratum_def[1], "epc.leaf_turnover",      lhs_scaled$epc.leaf_turnover),
+  list(input_hdr$stratum_def[1], "epc.livewood_turnover",  lhs_scaled$epc.livewood_turnover),
+  list(input_hdr$stratum_def[1],  "epc.gl_c",                lhs_scaled$epc.gl_c),
+  list(input_hdr$stratum_def[1],    "epc.gl_smax",          lhs_scaled$epc.gl_smax),
+  list(input_hdr$stratum_def[1],    "epc.proj_sla",          lhs_scaled$epc.proj_sla),
+  list(input_hdr$stratum_def[1], "epc.alloc_stemc_leafc",   lhs_scaled$epc.alloc_stemc_leafc),
+  list(input_hdr$stratum_def[1],  "epc.flnr",              lhs_scaled$epc.flnr),
+  list(input_hdr$stratum_def[1], "epc.alloc_frootc_leafc",  lhs_scaled$epc.alloc_frootc_leafc),
+
+  ## sampled LHS veg soil params
+  list(input_hdr$soil_def[1],    "DOM_decay_rate",               lhs_scaled$DOM_decay_rate),
+  list(input_hdr$soil_def[1],    "NO3_adsorption_rate",          lhs_scaled$NO3_adsorption_rate),
+  list(input_hdr$soil_def[1],    "N_decay",                      lhs_scaled$N_decay),
+  list(input_hdr$soil_def[1],    "DON_production_rate",          lhs_scaled$DON_production_rate)
+)
+
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+# -------------------- Run --------------------
+run_rhessys_multi(
+  input_rhessys    = input_rhessys,
+  hdr_files        = input_hdr,
+  tec_data         = input_tec_data,
+  def_pars         = input_def_pars,
+  output_filter    = NULL,
+  all_combinations = FALSE,
+  return_cmd       = F   # flip to FALSE to run
+)
+
+# -------------------- Save param table --------------------
+lhs_scaled |>
+  mutate(run = paste0(name, "_run", seq_len(n_runs))) |>
+  write_csv("out/LHSmega1/lhs_parameter_table.csv")
+
+
+
+
+```
+
+
+EVALUATE
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(RHESSysIOinR)
+
+
+
+# Find only the non-grow basin daily files to get base prefixes
+
+#### UPDATE FILE PATH
+out_files = list.files("out/LHSmega1", pattern = "hpb_LHSmega450_run.*basin\\.daily$", 
+                        full.names = TRUE)
+out_files = out_files[!grepl("grow", out_files)]  # exclude the grow files
+
+all_ts = map_dfr(out_files, function(f) {
+  
+  # Base prefix is everything before _basin.daily
+  # e.g. out/hpb_lhs_run001_basin.daily -> out/hpb_lhs_run001
+  run_prefix = gsub("_basin\\.daily$", "", f)
+  run        = gsub(".*/", "", run_prefix)
+  
+  message("Reading: ", run)
+  
+  dat = tryCatch(
+    readin_rhessys_output(run_prefix),
+    error = function(e) { 
+      message("  Failed: ", e$message)
+      return(NULL) 
+    }
+  )
+  
+  if (is.null(dat)) return(NULL)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  
+  out |>
+    select(date, year, month, day,
+           plantc = plantc.x,
+           soilc,
+           plantn,
+           soiln,
+           streamflow_DOC,
+           streamflow_DON,
+           streamflow_NO3,
+           lai    = lai.x,
+           unsat_stor, 
+           sat_def,
+           streamflow) |>
+    mutate(soil_moisture =  sat_def - unsat_stor) |> 
+    mutate(run = run)
+})
+
+
+# -------------------- Read data --------------------
+#### UPDATE FILE PATH
+param_table = read_csv("out/LHSmega1/lhs_parameter_table.csv")
+
+
+# -------------------- Scoring table (unchanged) --------------------
+results = all_ts |>
+  group_by(run) |>
+  slice_tail(n = 365) |>
+  summarise(
+    mean_plantc     = max(plantc,     na.rm = TRUE),
+    mean_soilc      = max(soilc,      na.rm = TRUE),
+    mean_lai        = max(lai,         na.rm = TRUE),
+    mean_streamflow = max(streamflow,  na.rm = TRUE),
+    mean_streamflow_DOC = max(streamflow_DOC,  na.rm = TRUE),
+    mean_streamflow_NO3 = max(streamflow_NO3,  na.rm = TRUE)
+  ) |>
+  left_join(param_table, by = "run") |>
+  mutate(score = abs(mean_plantc - 15) + 
+                 abs(mean_soilc  - 15)) |> #using 15 as target kg/m2 for both pools curretnly
+  arrange(score)
+
+print(head(results, 10))
+
+# -------------------- Time series plot — all runs overlaid --------------------
+# Color by score so best runs stand out
+all_ts |>
+  filter(date > ymd("2000-01-01")) |> 
+  left_join(results |> select(run, score), by = "run") |>
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow_DOC, streamflow, soil_moisture),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, 
+             group = run, color = score)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "Score\n(lower=better)") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "LHS runs — full time series",
+       subtitle = "Brighter lines = closer to target C stocks",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+```
+
+
+```{r}
+
+
+all_ts |>
+  filter(date > ymd("2000-01-01")) |> 
+  left_join(results |> select(run, score), by = "run") |>
+    filter(score > 25, score < 28) |> 
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow_DOC, streamflow, soil_moisture),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, 
+             group = run, color = score)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "Score\n(lower=better)") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "LHS runs — full time series",
+       subtitle = "Brighter lines = closer to target C stocks",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+
+
+
+# -------------------- Highlight just the top N runs --------------------
+top_n = 5
+
+top_runs = results$run[1:top_n]
+
+all_ts |>
+  filter(run %in% top_runs) |>
+  filter(date > ymd("2000-01-01")) |> 
+  left_join(results |> select(run, score), by = "run") |>
+  mutate(run_label = paste0(run, "\nscore=", round(score, 2))) |>
+  pivot_longer(cols = c(plantc, soilc, lai, streamflow),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, color = run_label)) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title    = paste("Top", top_n, "LHS runs by score"),
+       subtitle = "Are stocks leveling off by end of run?",
+       x = "Date", y = NULL, color = "Run") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# -------------------- Stabilization check --------------------
+# Compare mean of first vs last year to see if stocks are still drifting
+all_ts |>
+  left_join(results |> select(run, score), by = "run") |>
+  group_by(run, score) |>
+  mutate(run_year = year(as.Date(date)),
+         first_year = min(run_year),
+         last_year  = max(run_year)) |>
+  summarise(
+    plantc_start = mean(plantc[run_year == first_year], na.rm = TRUE),
+    plantc_end   = mean(plantc[run_year == last_year],  na.rm = TRUE),
+    soilc_start  = mean(soilc[run_year  == first_year], na.rm = TRUE),
+    soilc_end    = mean(soilc[run_year  == last_year],  na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    plantc_drift = round(plantc_end - plantc_start, 3),
+    soilc_drift  = round(soilc_end  - soilc_start,  3)
+  ) |>
+  arrange(score) |>
+  select(run, score, plantc_start, plantc_end, plantc_drift, 
+         soilc_start, soilc_end, soilc_drift) |>
+  print(n = 20)
+```
+
+
+
+
+
+
+
+
+
+#### SOBOL ####
+
+```{r}
+
+library(sensitivity)   # install.packages("sensitivity")
+library(RHESSysIOinR)
+library(tidyverse)
+library(data.table)
+
+setwd("repo/HPB_files_NEW")
+
+# -------------------- Parameter ranges --------------------
+param_ranges = list(
+  m                      = c(0.2, 2),
+  Ksat_0                 = c(10,    600),
+  sat_to_gw_coeff        = c(0,    1),
+  gw_loss_coeff          = c(0,    1),
+  epc.root_distrib_parm  = c(6,    20),
+  # epc.min_percent_leafg  = c(0,    2),
+  # epc.branch_turnover    = c(0.03, 0.04),
+  # epc.froot_turnover     = c(0.6,  0.9),
+  # epc.leaf_turnover      = c(0.1,  1.0),
+  # epc.livewood_turnover  = c(0.15, 0.35), #0.7 by default
+  # epc.gl_c               = c(0.00004, 0.00008),
+  # epc.gl_smax            = c(0.004,   0.009),
+  epc.proj_sla           = c(20,    45),
+  # epc.alloc_stemc_leafc  = c(1,    5),
+  # epc.flnr               = c(0.05, 0.3),
+  # epc.alloc_frootc_leafc = c(0.8,  1.6),
+  ## others to look at 3 epc.dead params
+  # DOM_decay_rate         = c(0.01, 0.1),
+  NO3_adsorption_rate    = c(0,    1)
+  # N_decay                = c(0.05, 0.3),
+  # DON_production_rate    = c(0.1,  0.5)
+)
+
+n_params = length(param_ranges)
+
+# -------------------- Generate Sobol sample matrices --------------------
+# n_samples × (n_params + 2) total runs
+# 50 samples × 22 = 1100 runs — fast on 1patch, slower on full basin
+## DWH trying 7 parma to start and nsamples = 10; those 90 iterations tool ~10 min to run for patches and took up 9GB
+n_samples = 50
+
+set.seed(42)
+X1 = as.data.frame(matrix(runif(n_samples * n_params), nrow = n_samples))
+X2 = as.data.frame(matrix(runif(n_samples * n_params), nrow = n_samples))
+colnames(X1) = colnames(X2) = names(param_ranges)
+
+# Scale from [0,1] to actual parameter ranges
+for (p in names(param_ranges)) {
+  lo = param_ranges[[p]][1]
+  hi = param_ranges[[p]][2]
+  X1[[p]] = lo + X1[[p]] * (hi - lo)
+  X2[[p]] = lo + X2[[p]] * (hi - lo)
+}
+
+# Create the Sobol object — this generates the full run matrix
+# model = NULL means we run RHESSys manually and feed results back in
+sob = sobolSalt(model = NULL, X1 = X1, X2 = X2, 
+                scheme = "A", nboot = 100)
+
+# In the container — save sob after creating it
+saveRDS(sob, "out/sobol/sob_object.rds")
+
+# sob$X is the full parameter matrix to run — n_samples × (n_params + 2) rows
+run_matrix = as.data.frame(sob$X)
+colnames(run_matrix) = names(param_ranges)
+
+message("Total runs to execute: ", nrow(run_matrix))
+print(head(run_matrix))
+
+# Save run matrix so you can recover it if something crashes
+# if (!dir.exists("out/sobol")) dir.create("out/sobol", recursive = TRUE)
+
+write_csv(run_matrix |> mutate(run_id = row_number()),
+          "out/sobol/sobol_run_matrix.csv")
+
+# -------------------- Setup RHESSys inputs --------------------
+
+dates = c("1950 1 1 1", "2200 1 2 24")
+name  = "hpb_sobol"
+
+input_rhessys = IOin_rhessys_input(
+  version          = "../../rhessys7.5",
+  tec_file         = paste0("tecfiles/", name, ".tec"),
+  world_file       = "worldfiles/MISC/1patch_spin_KEEP/hpb_1patch_vegID3.world",
+  world_hdr_prefix = name,
+  flowtable        = "flowtables/1patch_spin/hpb_1patch_vegID3.flow",
+  start            = dates[1],
+  end              = dates[2],
+  output_folder    = "out/sobol/",
+  output_prefix    = name,
+  commandline_options = "-b -g -climrepeat"
+)
+
+input_hdr = IOin_hdr(
+  basin        = "defs/basin.def",
+  hillslope    = "defs/hill.def",
+  zone         = "defs/zone.def",
+  soil         = "defs/soil_siltyloam.def",
+  landuse      = "defs/lu_undev.def",
+  stratum      = "defs/veg_deciduous.def",
+  basestations = "clim/ccr_base"
+)
+
+input_tec_data = IOin_tec_std(start = dates[1], end = dates[2],
+                               output_state = FALSE)
+
+# -------------------- Build pars_list from run matrix --------------------
+# Each column of run_matrix becomes a vector passed to run_rhessys_multi
+pars_list = list(
+  ### Soil params
+  list(input_hdr$soil_def[1],      "m",                   run_matrix$m),
+  list(input_hdr$soil_def[1],      "Ksat_0",              run_matrix$Ksat_0),
+  list(input_hdr$soil_def[1],      "sat_to_gw_coeff",     run_matrix$sat_to_gw_coeff),
+  # list(input_hdr$soil_def[1],      "DOM_decay_rate",      run_matrix$DOM_decay_rate),
+  list(input_hdr$soil_def[1],      "NO3_adsorption_rate", run_matrix$NO3_adsorption_rate),
+  # list(input_hdr$soil_def[1],      "N_decay",             run_matrix$N_decay),
+  # list(input_hdr$soil_def[1],      "DON_production_rate", run_matrix$DON_production_rate),
+  ### Hillslope params
+  list(input_hdr$hillslope_def[1], "gw_loss_coeff",       run_matrix$gw_loss_coeff),
+  ### Stratum params
+  list(input_hdr$stratum_def[1],   "epc.root_distrib_parm",  run_matrix$epc.root_distrib_parm),
+  # list(input_hdr$stratum_def[1],   "epc.min_percent_leafg",  run_matrix$epc.min_percent_leafg),
+  # list(input_hdr$stratum_def[1],   "epc.branch_turnover",    run_matrix$epc.branch_turnover),
+  # list(input_hdr$stratum_def[1],   "epc.froot_turnover",     run_matrix$epc.froot_turnover),
+  # list(input_hdr$stratum_def[1],   "epc.leaf_turnover",      run_matrix$epc.leaf_turnover),
+  # list(input_hdr$stratum_def[1],   "epc.livewood_turnover",  run_matrix$epc.livewood_turnover),
+  # list(input_hdr$stratum_def[1],   "epc.gl_c",               run_matrix$epc.gl_c),
+  # list(input_hdr$stratum_def[1],   "epc.gl_smax",            run_matrix$epc.gl_smax),
+  list(input_hdr$stratum_def[1],   "epc.proj_sla",           run_matrix$epc.proj_sla)
+  # list(input_hdr$stratum_def[1],   "epc.alloc_stemc_leafc",  run_matrix$epc.alloc_stemc_leafc),
+  # list(input_hdr$stratum_def[1],   "epc.flnr",               run_matrix$epc.flnr),
+  # list(input_hdr$stratum_def[1],   "epc.alloc_frootc_leafc", run_matrix$epc.alloc_frootc_leafc)
+)
+
+input_def_pars = IOin_def_pars_simple(pars_list)
+
+# -------------------- Run --------------------
+run_rhessys_multi(
+  input_rhessys    = input_rhessys,
+  hdr_files        = input_hdr,
+  tec_data         = input_tec_data,
+  def_pars         = input_def_pars,
+  output_filter    = NULL,
+  all_combinations = FALSE,
+  return_cmd       = F   # flip to FALSE to run
+)
+
+
+```
+
+
+EVALUATE
+
+```{r}
+source("../Unit_Conversions.R")
+
+#readin cretated run matrix and sob file
+run_matrix <- read.csv("D:/RHESSys/OUT_Sobol1/sobol/sobol_run_matrix.csv")
+sob = readRDS("D:/RHESSys/OUT_Sobol1/sobol/sob_object.rds")
+
+# -------------------- Read outputs and compute model responses --------------------
+# out_files = list.files("out/sobol", pattern = "basin\\.daily$", full.names = TRUE)
+out_files = list.files("D:/RHESSys/OUT_Sobol1/sobol", pattern = "basin\\.daily$", full.names = TRUE)
+out_files = out_files[!grepl("grow", out_files)]
+# out_files = sort(out_files)  # critical — must match row order of run_matrix
+
+message("Files found: ", length(out_files))
+message("Runs executed: ", nrow(run_matrix))
+# These must be equal before proceeding
+
+all_ts = map_dfr(seq_along(out_files), function(i) {
+  f          = out_files[i]
+  run_prefix = gsub("_basin\\.daily$", "", f)
+  
+  dat = tryCatch(readin_rhessys_output(run_prefix),
+                 error = function(e) { message("Failed: ", e); return(NULL) })
+  if (is.null(dat)) return(NULL)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  out |>
+    mutate(
+      streamflow_Ls = mm_to_Ls(streamflow, 4.299446),
+      DOC_mgL       = gm2day_to_mgL(streamflow_DOC, streamflow),
+      NO3_mgL       = gm2day_to_mgL(streamflow_NO3, streamflow)
+    ) |>
+    mutate(soil_moisture =  sat_def - unsat_stor) |> 
+    select(date, lai = lai.x, plantc = plantc.x, soilc, plantn, soiln, soil_moisture,
+           streamflow, streamflow_DOC, streamflow_NO3,
+           streamflow_Ls, DOC_mgL, NO3_mgL) |>
+    mutate(run_id = i)
+})
+
+
+
+# plot it all
+all_ts |>
+  mutate(year = year(date)) |> 
+  group_by(year, run_id) |> 
+  summarize(across(c(lai:NO3_mgL), mean, na.rm = TRUE)) |> 
+  select(year, run_id, everything()) |> 
+    # filter(date > ymd("2000-01-01")) |> 
+  pivot_longer(-c(1:2),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = year, y = value, 
+             group = run_id, color = run_id)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "runID") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "sobol patch runs — full time series",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+
+
+# -------------------- Compute one scalar response per run --------------------
+# Sobol needs a single number per run — compute several and run Sobol on each
+responses = all_ts |>
+  group_by(run_id) |>
+  summarise(
+    # End of run C stocks
+    mean_plantc     = mean(tail(plantc,    365), na.rm = TRUE),
+    mean_soilc      = mean(tail(soilc,     365), na.rm = TRUE),
+    mean_lai        = mean(tail(lai,        365), na.rm = TRUE),
+    mean_streamflow = mean(tail(streamflow_Ls, 365), na.rm = TRUE),
+    mean_NO3        = mean(tail(NO3_mgL,   365), na.rm = TRUE),
+    mean_DOC        = mean(tail(DOC_mgL,   365), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(run_id)   # must match run_matrix row order
+
+# Confirm alignment
+stopifnot(nrow(responses) == nrow(run_matrix))
+
+# -------------------- Feed results back to Sobol and get indices --------------------
+# Run Sobol separately for each response variable
+sobol_results = list()
+
+for (resp_var in c("mean_plantc", "mean_soilc", "mean_lai", 
+                    "mean_streamflow", "mean_NO3", "mean_DOC")) {
+  
+  message("Computing Sobol indices for: ", resp_var)
+  
+  # Feed model output back into the Sobol object
+  sob_copy = sob
+  tell(sob_copy, responses[[resp_var]])
+  
+  # Extract first-order (S1) and total-effect (ST) indices
+  sobol_results[[resp_var]] = tibble(
+    parameter = names(param_ranges),
+    S1        = sob_copy$S$original,    # first order sensitivity
+    S1_conf   = sob_copy$S$`max. c.i.` - sob_copy$S$`min. c.i.`,  # confidence interval
+    ST        = sob_copy$T$original,    # total effect
+    ST_conf   = sob_copy$T$`max. c.i.` - sob_copy$T$`min. c.i.`,
+    response  = resp_var
+  )
+}
+
+sobol_df = bind_rows(sobol_results)
+
+# -------------------- Plot Sobol indices --------------------
+# Plot 1: ST indices per response — which params matter for each output?
+sobol_df |>
+  ggplot(aes(x = reorder(parameter, ST), y = ST, fill = ST)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = ST - ST_conf/2, ymax = ST + ST_conf/2), 
+                width = 0.3) +
+  scale_fill_viridis_c(direction = -1) +
+  coord_flip() +
+  facet_wrap(~response, scales = "free_x", ncol = 3) +
+  labs(title = "Sobol total-effect indices (ST) by response variable",
+       subtitle = "Higher ST = parameter explains more output variance",
+       x = NULL, y = "ST index") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+# Plot 2: S1 vs ST — reveals parameter interactions
+sobol_df |>
+  filter(response == "mean_plantc") |>   # change to any response
+  ggplot(aes(x = S1, y = ST, label = parameter)) +
+  geom_point(size = 3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  ggrepel::geom_text_repel(size = 3) +
+  labs(title    = "S1 vs ST — parameter interactions",
+       subtitle  = "Points above dashed line interact with other parameters",
+       x = "First-order index (S1)",
+       y = "Total-effect index (ST)") +
+  theme_bw()
+
+# -------------------- Summarize which parameters to keep calibrating --------------------
+# Parameters with ST > 0.05 across any response are worth calibrating
+important_params = sobol_df |>
+  group_by(parameter) |>
+  summarise(max_ST = max(ST, na.rm = TRUE),
+            responses_sensitive = sum(ST > 0.05, na.rm = TRUE)) |>
+  arrange(desc(max_ST))
+
+print(important_params)
+
+message("\nParameters to keep in calibration (ST > 0.05 for any response):")
+print(important_params |> filter(max_ST > 0.05) |> pull(parameter))
+
+message("\nParameters that can be fixed at defaults (ST < 0.05 everywhere):")
+print(important_params |> filter(max_ST < 0.05) |> pull(parameter))
+
+```
+
+
+
+
+try monthly files for size
+
+```{r}
+# out_files = list.files("out/sobol", pattern = "basin\\.daily$", full.names = TRUE)
+out_files2 = list.files("D:/RHESSys/OUT_Sobol2/sobol", pattern = "basin\\.monthly$", full.names = TRUE)
+out_files2 = out_files2[!grepl("grow", out_files2)]
+# out_files = sort(out_files)  # critical — must match row order of run_matrix
+
+message("Files found: ", length(out_files))
+message("Runs executed: ", nrow(run_matrix))
+# These must be equal before proceeding
+
+all_ts2 = map_dfr(seq_along(out_files2), function(i) {
+  f          = out_files2[i]
+  run_prefix = gsub("_basin\\.monthly$", "", f)
+  
+  dat = tryCatch(readin_rhessys_output(run_prefix),
+                 error = function(e) { message("Failed: ", e); return(NULL) })
+  if (is.null(dat)) return(NULL)
+  
+  out = left_join(dat$bd, dat$bdg,
+                  by = c("day", "month", "year", "basinID", "wy", "yd", "date"))
+  out |>
+    mutate(
+      streamflow_Ls = mm_to_Ls(streamflow, 4.299446),
+      DOC_mgL       = gm2day_to_mgL(streamflow_DOC, streamflow),
+      NO3_mgL       = gm2day_to_mgL(streamflow_NO3, streamflow)
+    ) |>
+    mutate(soil_moisture =  sat_def - unsat_stor) |> 
+    select(date, lai = lai.x, plantc = plantc.x, soilc, plantn, soiln, soil_moisture,
+           streamflow, streamflow_DOC, streamflow_NO3,
+           streamflow_Ls, DOC_mgL, NO3_mgL) |>
+    mutate(run_id = i)
+})
+
+
+# plot it all
+all_ts2 |>
+  select(date, run_id, everything()) |> 
+  filter(date > ymd("2000-01-01")) |> 
+  pivot_longer(-c(1:2),
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = as.Date(date), y = value, 
+             group = run_id, color = run_id)) +
+  geom_line(alpha = 0.6, linewidth = 0.3) +
+  scale_color_viridis_c(direction = -1, name = "runID") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(title = "sobol patch runs — full time series",
+       x = "Date", y = NULL) +
+  theme_bw() +
+  theme(legend.position = "right")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

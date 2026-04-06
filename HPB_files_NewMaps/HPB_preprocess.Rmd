@@ -1,0 +1,412 @@
+---
+title: "HPB_preprocess"
+output: html_document
+date: "2026-04-06"
+---
+
+
+## Get packages 
+
+```{r}
+library(terra)
+library(RHESSysPreprocessing)
+```
+
+
+
+#### look at maps 
+
+```{r}
+#basin
+getwd()
+basin <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_ws.tif")
+plot(basin, main = "Watershed")
+
+#dem
+dem <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_dem.tif")
+plot(dem, main = "DEM")
+
+#slope
+slope <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_slope.tif")
+plot(slope, main = "slope")
+
+#aspect
+aspect <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_aspect.tif")
+plot(aspect, main = "aspect")
+
+#West Horizon
+whr <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_whr.tif")
+plot(whr, main = "West horizon")
+
+#East horizon
+ehr <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_ehr.tif")
+plot(ehr, main = "east  horizon")
+
+#slope
+slope <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_slope.tif")
+plot(dem, main = "slope")
+
+
+
+#basins
+basins <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_basin750.tif")
+plot(basins, main = "basins")
+
+# half basins
+halfbasins <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_halfbasin750.tif")
+plot(halfbasins, main = "halfbasins")
+
+
+#streams Grass default 
+streams <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_stream750.tif")
+plot(streams, main = "streams", type = "classes") #the type classes let you see what the segment numbers are
+
+
+#streams as 1
+streams_1 <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_stream750_1.tif")
+plot(streams_1, main = "streams_1", type = "classes")
+
+
+```
+
+
+#### Try running RHESSys preprocess with these files from GRASS
+
+
+```{r}
+
+getwd()
+## set up file paths 
+template = "worldfiles/templates/template_hpb_NOfill.txt"
+type = "raster"
+typepars = "spatial_data" #path of the folder containing your rasters; these are copied from grass output in "../Spatial_Data/GRASS_hpbNEW_outputs/"
+name = "hpb"
+overwrite = FALSE
+streams = "hpb_stream750"  #this is the GRASS streams that has segment #s
+header = FALSE
+parallel = TRUE
+make_stream = 4
+
+## run preprocess
+RHESSysPreprocess(
+  template,
+  name,
+  map_dir = typepars,
+  typepars = NULL,
+  streams = streams,
+  overwrite = overwrite,
+  roads = NULL,
+  impervious = NULL,
+  roofs = NULL,
+  header = header,
+  meta = FALSE,
+  asprules = NULL,
+  unique_strata_ID = TRUE,
+  seq_patch_IDs = FALSE,
+  output_patch_map = FALSE,
+  fire_grid_out = FALSE,
+  parallel = parallel,
+  make_stream = make_stream,
+  skip_hillslope_check = TRUE,
+  convert_aspect = TRUE,
+  wrapper = TRUE
+)
+
+
+```
+
+
+#fill NAs for error sites 
+basin750, halfbasin 750, slope, aspect
+
+```{r}
+
+#read in rasters and check for visual NA issues
+watershed <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_ws.tif")
+plot((watershed), main = "watershed map")
+plot(is.na(watershed), main = "NA locations in watershed map")
+
+#slope and aspect map with NA
+slope <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_slope.tif")
+plot(slope, main = "slope map") # type shows the legend
+plot(is.na(slope), main = "NA locations in slope map")
+
+aspect <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_aspect.tif")
+plot(aspect, main = "aspect map") # type shows the legend
+plot(is.na(aspect), main = "NA locations in aspect map")
+
+#basin and patches with NA
+basins <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_basin750.tif")
+unique(basins)
+plot(basins, type = 'classes', main = "basins map") # type shows the legend
+plot(is.na(basins), main = "NA locations in basins map")
+
+halfbasins <- rast("../Spatial_Data/GRASS_hpbNEW_outputs/hpb_halfbasin750.tif")
+unique(halfbasins)
+plot(halfbasins, type = 'classes', main = "halfbasins map") # type shows the legend
+plot(is.na(halfbasins), main = "NA locations in halfbasins map")
+
+
+#check that extent and everything is the same, should return trues
+compareGeom(basins, watershed)
+compareGeom(halfbasins, watershed)
+compareGeom(slope, watershed)
+compareGeom(aspect, watershed)
+
+#visualize NAs better
+na_mask <- is.na(basins)
+plot(na_mask, col = c("transparent", "red"), legend = FALSE, main = "NA Locations")
+
+# zoom(patch)
+
+```
+
+
+```{r}
+#function from chatt
+fill_edge_na <- function(r, watershed, maxiter = 20) {
+  
+  # Ensure aligned
+  r <- resample(r, watershed, method="near")
+  
+  # Mask to watershed
+  r <- mask(r, watershed)
+  
+  for (i in 1:maxiter) {
+    
+    na_cells <- is.na(r) & !is.na(watershed)
+    if (!any(values(na_cells), na.rm=TRUE)) break
+    
+    r <- focal(
+      r,
+      w = 3,
+      fun = function(x, ...) {
+        if (all(is.na(x))) return(NA)
+        return(x[which(!is.na(x))[1]])
+      },
+      na.policy = "only",
+      fillvalue = NA
+    )
+    
+    r <- mask(r, watershed)
+  }
+  
+  return(r)
+}
+
+
+#### try it 
+#basins
+basins_filled  <- fill_edge_na(basins, watershed)
+plot(basins_filled)
+sum(is.na(values(basins_filled)))
+sum(is.na(values(basins)))
+sum(is.na(values(watershed)))
+
+#half basisn
+halfbasins_filled <- fill_edge_na(halfbasins, watershed)
+plot(halfbasins_filled)
+sum(is.na(values(halfbasins_filled)))
+sum(is.na(values(halfbasins)))
+sum(is.na(values(watershed)))
+
+
+##write new rasters
+# writeRaster(basins_filled, "spatial_data/hpb_basin750_filled_6apr26.tif", overwrite = T)
+# writeRaster(halfbasins_filled, "spatial_data/hpb_halfbasin750_filled_6apr26.tif", overwrite = T)
+
+
+#slope 
+slope_filled  <- fill_edge_na(slope, watershed)
+plot(slope)
+plot(slope_filled)
+sum(is.na(values(slope_filled)))
+sum(is.na(values(slope)))
+sum(is.na(values(watershed)))
+
+#aspect
+aspect_filled  <- fill_edge_na(aspect, watershed)
+plot(aspect)
+plot(aspect_filled)
+sum(is.na(values(aspect_filled)))
+sum(is.na(values(aspect)))
+sum(is.na(values(watershed)))
+
+##write new rasters
+# writeRaster(slope_filled, "spatial_data/hpb_slope_filled_6apr26.tif", overwrite = T)
+# writeRaster(aspect_filled, "spatial_data/hpb_aspect_filled_6apr26.tif", overwrite = T)
+
+
+
+```
+
+
+
+## Retry preprocess scripts with fill
+
+```{r}
+
+getwd()
+## set up file paths 
+template = "worldfiles/templates/template_hpb_fill_halfbasinPatch.txt"
+type = "raster"
+typepars = "spatial_data" #path of the folder containing your rasters; these are copied from grass output in "../Spatial_Data/GRASS_hpbNEW_outputs/"
+name = "hpb"
+overwrite = FALSE
+streams = "hpb_stream750"  #this is the GRASS streams that has segment #s ; doens't seem to affect flow table or worldfie using stream with segments or all segments as 1
+header = FALSE
+parallel = TRUE
+make_stream = 4
+
+## run preprocess
+RHESSysPreprocess(
+  template,
+  name,
+  map_dir = typepars,
+  typepars = NULL,
+  streams = streams,
+  overwrite = overwrite,
+  roads = NULL,
+  impervious = NULL,
+  roofs = NULL,
+  header = header,
+  meta = FALSE,
+  asprules = NULL,
+  unique_strata_ID = TRUE,
+  seq_patch_IDs = FALSE,
+  output_patch_map = FALSE,
+  fire_grid_out = FALSE,
+  parallel = parallel,
+  make_stream = make_stream,
+  skip_hillslope_check = TRUE,
+  convert_aspect = TRUE,
+  wrapper = TRUE
+)
+
+```
+
+
+
+## some plots to conceputalize basins 
+
+```{r}
+#basins and their streams
+plot(rast("./spatial_data/hpb_basin750_filled_6apr26.tif"))
+plot(rast("./spatial_data/hpb_stream750.tif"), type = "classes", add = T)
+plot(rast("./spatial_data/hpb_stream750.tif"), type = "classes", add = T,
+          col  = c("steelblue", "orange", "forestgreen")) # one color per class
+
+# col  = hcl.colors(n = 5, palette = "Set 2"),   # n = number of classes
+
+
+#half basins
+plot(rast("./spatial_data/hpb_halfbasin750_filled_6apr26.tif"))
+
+
+
+```
+
+
+## try making a more informed patch map 
+Functionally doing the the altitude bands × hillslope method from the RHESSys wiki in GRASS, code adapted with claude
+
+```{r}
+dem  <- rast("./spatial_data/hpb_dem.tif")
+plot(dem)
+
+hillslopes <- rast("./spatial_data/hpb_halfbasin750_filled_6apr26.tif")
+plot(hillslopes)
+
+# ~100 patches across 6 hillslopes = ~17 elevation bands per hillslope
+n_bands   <- round(100 / global(hillslopes, "max", na.rm = TRUE)[[1]])
+elev_min  <- global(dem, "min", na.rm = TRUE)[[1]]
+elev_range <- global(dem, "range", na.rm = TRUE)
+band_width <- (elev_range[1,2] - elev_range[1,1]) / n_bands
+
+# Create elevation bands
+alt_bands <- floor((dem - elev_min) / band_width)
+plot(alt_bands)
+
+# Combine: each hillslope x elevation band = unique patch
+patch_map <- hillslopes * (n_bands + 1) + alt_bands
+patch_map <- mask(patch_map, hillslopes)
+plot(patch_map)
+
+# Compact IDs to 1:N with no gaps
+vals <- values(patch_map)
+uvals <- sort(unique(vals[!is.na(vals)]))
+values(patch_map)[!is.na(vals)] <- match(vals[!is.na(vals)], uvals)
+
+#look at patches a few ways
+plot(patch_map)
+plot(patch_map, type = "classes")
+
+pal <- colorRampPalette(c("darkblue", "white", "darkred"))
+# Use 100 shades for a smooth gradient
+plot(patch_map, col = pal(100))
+
+#check number of patches
+unique(patch_map)
+global(patch_map, "max", na.rm = TRUE)  # check total patches
+
+##write raster
+# writeRaster(patch_map, "./spatial_data/hpb_patch_map.tif", overwrite = TRUE)
+
+plot(rast("./spatial_data/hpb_patch_map.tif""))
+
+# Adjust the target by changing 100 — the actual count may differ slightly since not every hillslope spans the full elevation range. Check with global(patch_map, "max", na.rm = TRUE) and tune from there.
+
+
+```
+
+
+
+#run preprocessing with smaller patch sizes
+
+```{r}
+
+getwd()
+## set up file paths 
+template = "worldfiles/templates/template_hpb.txt"
+type = "raster"
+typepars = "spatial_data" #path of the folder containing your rasters; these are copied from grass output in "../Spatial_Data/GRASS_hpbNEW_outputs/"
+name = "hpb"
+overwrite = FALSE
+streams = "hpb_stream750"  #this is the GRASS streams that has segment #s ; doens't seem to affect flow table or worldfie using stream with segments or all segments as 1
+header = FALSE
+parallel = TRUE
+make_stream = 4
+
+## run preprocess
+RHESSysPreprocess(
+  template,
+  name,
+  map_dir = typepars,
+  typepars = NULL,
+  streams = streams,
+  overwrite = overwrite,
+  roads = NULL,
+  impervious = NULL,
+  roofs = NULL,
+  header = header,
+  meta = FALSE,
+  asprules = NULL,
+  unique_strata_ID = TRUE,
+  seq_patch_IDs = FALSE,
+  output_patch_map = FALSE,
+  fire_grid_out = FALSE,
+  parallel = parallel,
+  make_stream = make_stream,
+  skip_hillslope_check = TRUE,
+  convert_aspect = TRUE,
+  wrapper = TRUE
+)
+
+
+```
+
+
+
+
+
+

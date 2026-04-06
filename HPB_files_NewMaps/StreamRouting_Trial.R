@@ -3,20 +3,13 @@
 
 library(terra)
 
-##check on data
-getwd()
-s <- rast("./HPB_files_NewMaps/spatial_data/hpb_stream750.tif")
-plot(s, type = "classes")
-cat("Reach IDs found:", sort(unique(na.omit(values(s)))), "\n")
-cat("Number of reaches:", length(unique(na.omit(values(s)))), "\n")
-
-### Function to make streamtable
 generate_streamtable <- function(
-    stream_rast,       # stream raster with reach IDs matching subbasin IDs
-    dem_rast,          # DEM
-    patch_rast,        # patch raster
-    subbasin_rast,     # subbasin raster (reach IDs match these)
-    hill_rast,         # hillslope raster (2 per subbasin, sequentially numbered)
+    stream_rast,
+    dem_rast,
+    patch_rast,
+    zone_rast,       # added back - pass patch map for your setup
+    subbasin_rast,
+    hill_rast,
     output_file,
     ManningsN      = 0.035,
     streamTopWidth = 2.0,
@@ -26,6 +19,7 @@ generate_streamtable <- function(
   stream   <- rast(stream_rast)
   dem      <- rast(dem_rast)
   patch    <- rast(patch_rast)
+  zone     <- rast(zone_rast)      # read zone raster directly
   subbasin <- rast(subbasin_rast)
   hill     <- rast(hill_rast)
 
@@ -33,65 +27,31 @@ generate_streamtable <- function(
   n_reaches <- length(reach_ids)
   message("Found ", n_reaches, " stream reaches.")
 
-  # --- Build hillslope-to-subbasin lookup from your numbering scheme ---
-  # Basin 2 -> hills 1,2 | Basin 4 -> hills 3,4 | Basin 6 -> hills 5,6
-  # Pattern: hill IDs = (basin_id - 2) + 1 and (basin_id - 2) + 2
-  # i.e. for basin b: hills (b/2)*2 - 1 and (b/2)*2
-  # We derive this empirically from the rasters to be safe
-
-  hill_vals    <- values(hill)
-  subbasin_vals <- values(subbasin)
-
-  # For each cell, record which subbasin its hillslope belongs to
-  valid <- !is.na(hill_vals) & !is.na(subbasin_vals)
-  hill_sub_df <- unique(data.frame(
-    hill_id    = hill_vals[valid],
-    subbasin_id = subbasin_vals[valid]
-  ))
-  # Each hillslope ID maps to exactly one subbasin
-  hill_to_sub <- setNames(hill_sub_df$subbasin_id, hill_sub_df$hill_id)
-
-  # --- Build reach topology from DEM ---
-  # Mean elevation per reach to determine upstream/downstream order
-  reach_elev <- sapply(reach_ids, function(rid) {
-    cells <- which(values(stream) == rid)
-    mean(values(dem)[cells], na.rm = TRUE)
-  })
-  names(reach_elev) <- reach_ids
-
-  # Flow topology: for each reach, downstream reach is the one it flows into
-  # We find this by looking at the outlet cell of each reach (lowest elevation)
-  # and checking which reach ID is in its downstream neighborhood
-
-  flow_dir <- terrain(dem, v = "flowdir")  # terra's flow direction
-
+  # Build reach topology from DEM
   get_downstream_reach <- function(rid) {
     cells <- which(values(stream) == rid)
     elev_vals <- values(dem)[cells]
     outlet_cell <- cells[which.min(elev_vals)]
 
-    # Walk downstream from outlet until we hit a different reach ID
     visited <- c()
     current <- outlet_cell
-    for (i in 1:20) {  # max steps to find next reach
+    for (i in 1:20) {
       nbrs <- adjacent(stream, current, directions = 8)[1, ]
       nbrs <- nbrs[!is.na(nbrs)]
       nbr_reach_ids <- values(stream)[nbrs]
 
-      # Check if any neighbor belongs to a different reach
       different <- nbrs[!is.na(nbr_reach_ids) & nbr_reach_ids != rid]
       if (length(different) > 0) {
         return(values(stream)[different[1]])
       }
 
-      # Otherwise follow flow direction downhill
       nbr_elevs <- values(dem)[nbrs]
       if (all(is.na(nbr_elevs))) break
       current <- nbrs[which.min(nbr_elevs)]
       if (current %in% visited) break
       visited <- c(visited, current)
     }
-    return(NA)  # outlet reach, no downstream
+    return(NA)
   }
 
   message("Building reach topology...")
@@ -100,80 +60,66 @@ generate_streamtable <- function(
     reach_ids
   )
 
-  # Invert to get upstream reaches for each reach
   upstream_of <- lapply(reach_ids, function(rid) {
     reach_ids[!is.na(downstream_of) & downstream_of == rid]
   })
   names(upstream_of) <- reach_ids
 
-  # --- Build adjacent patch/hillslope info per reach ---
+  # Adjacent patches - now reads zone directly from zone raster
   message("Finding adjacent patches and hillslopes...")
 
   get_adjacent_patches <- function(rid) {
     reach_cells <- which(values(stream) == rid)
 
-    # Get all neighboring cells that are NOT stream
     nbr_cells <- unique(unlist(lapply(reach_cells, function(cell) {
       nbrs <- adjacent(stream, cell, directions = 8)[1, ]
       nbrs <- nbrs[!is.na(nbrs)]
-      nbrs[is.na(values(stream)[nbrs])]  # non-stream neighbors
+      nbrs[is.na(values(stream)[nbrs])]
     })))
 
     if (length(nbr_cells) == 0) return(data.frame())
 
     adj_df <- data.frame(
       patch_id = values(patch)[nbr_cells],
+      zone_id  = values(zone)[nbr_cells],   # pulled directly from zone raster
       hill_id  = values(hill)[nbr_cells]
     )
     adj_df <- na.omit(adj_df)
     adj_df <- unique(adj_df)
 
-    # zone_id = subbasin_id for each hillslope (since zone == subbasin in your setup)
-    adj_df$zone_id <- hill_to_sub[as.character(adj_df$hill_id)]
-
     return(adj_df)
   }
 
-  # --- Compute reach geometry from DEM ---
   get_reach_geometry <- function(rid) {
     cells <- which(values(stream) == rid)
     elev_vals <- values(dem)[cells]
-
     elev_range <- diff(range(elev_vals, na.rm = TRUE))
-    res_m      <- res(dem)[1]
-    length_m   <- length(cells) * res_m
-    slope      <- max(elev_range / length_m, 0.0001)
-
+    res_m    <- res(dem)[1]
+    length_m <- length(cells) * res_m
+    slope    <- max(elev_range / length_m, 0.0001)
     list(length = round(length_m, 2), slope = round(slope, 6))
   }
 
-  # --- Write streamtable ---
   message("Writing streamtable to: ", output_file)
   con <- file(output_file, "w")
   writeLines(as.character(n_reaches), con)
 
   for (rid in reach_ids) {
-    geom    <- get_reach_geometry(rid)
-    adj     <- get_adjacent_patches(rid)
-    n_adj   <- nrow(adj)
+    geom  <- get_reach_geometry(rid)
+    adj   <- get_adjacent_patches(rid)
+    n_adj <- nrow(adj)
 
     ups   <- upstream_of[[as.character(rid)]]
     downs <- downstream_of[as.character(rid)]
     downs <- downs[!is.na(downs)]
 
-    # Header: reachID botWidth topWidth maxHeight slope Manning length nAdjacentPatches
     line <- paste(
       rid,
-      streamBotWidth,
-      streamTopWidth,
-      streamDepth,
-      geom$slope,
-      ManningsN,
-      geom$length,
+      streamBotWidth, streamTopWidth, streamDepth,
+      geom$slope, ManningsN, geom$length,
       n_adj
     )
 
-    # Adjacent patch triplets: patchID zoneID hillID
     if (n_adj > 0) {
       triplets <- paste(
         apply(adj, 1, function(row)
@@ -184,10 +130,7 @@ generate_streamtable <- function(
       line <- paste(line, triplets)
     }
 
-    # Upstream reaches
     line <- paste(line, length(ups), paste(ups, collapse = " "))
-
-    # Downstream reaches
     line <- paste(line, length(downs), paste(downs, collapse = " "))
 
     writeLines(trimws(line), con)
@@ -195,8 +138,7 @@ generate_streamtable <- function(
 
   close(con)
   message("Done. Streamtable has ", n_reaches, " reaches.")
-
-} #end of function
+}
 
 
 #### use function
@@ -204,8 +146,9 @@ generate_streamtable(
   stream_rast   = "./HPB_files_NewMaps/spatial_data/hpb_stream750.tif",
   dem_rast      = "./HPB_files_NewMaps/spatial_data/hpb_dem.tif",
   patch_rast    = "./HPB_files_NewMaps/spatial_data/hpb_patch_map.tif",
+  zone_rast     = "./HPB_files_NewMaps/spatial_data/hpb_patch_map.tif",  # zone = patch
   subbasin_rast = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",
-  hill_rast     = "./HPB_files_NewMaps/spatial_data/hpb_halfbasin750_filled_6apr26.tif",
+  hill_rast     = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",  # hill = subbasin
   output_file   = "./HPB_files_NewMaps/stream.hpb",
   ManningsN      = 0.035,
   streamTopWidth = 3.0,
@@ -276,7 +219,7 @@ read_streamtable <- function(file) {
 
 
 ####read in and check file
-st <- read_streamtable("./HPB_files_NewMaps/stream.yourwatershed")
+st <- read_streamtable("./HPB_files_NewMaps/stream.hpb")
 
 
 

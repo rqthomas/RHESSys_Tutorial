@@ -16,13 +16,14 @@ name = "hpb_RouteTest_1"
 input_rhessys = IOin_rhessys_input(
   version          = "../../RHESSys/rhessys/rhessys7.5",
   tec_file         =  paste0("tecfiles/",name,".tec"), #for using tecfile built below
-  world_file       = "worldfiles/hpb.world", #what was made in pre-processing
+  world_file       = "worldfiles/world_flow_kmeans300_patches/hpb.world", #what was made in pre-processing
   world_hdr_prefix = "hpb_spintest",
-  flowtable        = "worldfiles/flowtables/hpb.flow", #what was made in pre-processing
+  flowtable        = "worldfiles/world_flow_kmeans300_patches/hpb.flow", #what was made in pre-processing
   start            = dates[1],
   end              = dates[2],
   output_folder    = "out/RouteTest100yr",
   output_prefix    = name,
+  # commandline_options = "-b -g -climrepeat"
   commandline_options = "-b -g -climrepeat -str worldfiles/flowtables/stream.hpb -stro"
 )
 
@@ -67,20 +68,22 @@ run_rhessys_single(
 )
 
 
+
+
 #### Look at output ####
 #read in validation csv
-target_df <- read_csv("../Target_Data_comp/TargetData_15mar26.csv") |> 
-  rename(date = Date)
-
-#get plotting function
-source('read_plot_rhessys_fun.R')
-
-read_plot_rhessys(outname = "out/RouteTest100yr/hpb_RouteTest_1", date_filter = as.Date("1950-01-01"),
- ncol = 5, validate = F)
-
-
-##read in streamrouting 
-col_names <- c("day","month","year","reachID","Qout","lateralinput","Qin","waterdepth","reservoir.store","NO3_out","NH4_out","DON_out","DOC_out")
-df <- read.table("out/RouteTest/hpb_streamroute_test_streamrouting.daily",
-                 header = TRUE, col.names = col_names, fill = TRUE)
-head(df)
+# target_df <- read_csv("../Target_Data_comp/TargetData_15mar26.csv") |>
+#   rename(date = Date)
+#
+# #get plotting function
+# source('read_plot_rhessys_fun.R')
+#
+# read_plot_rhessys(outname = "out/RouteTest100yr/hpb_RouteTest_1", date_filter = as.Date("1950-01-01"),
+#  ncol = 5, validate = F)
+#
+#
+# ##read in streamrouting
+# col_names <- c("day","month","year","reachID","Qout","lateralinput","Qin","waterdepth","reservoir.store","NO3_out","NH4_out","DON_out","DOC_out")
+# df <- read.table("out/RouteTest/hpb_streamroute_test_streamrouting.daily",
+#                  header = TRUE, col.names = col_names, fill = TRUE)
+# head(df)

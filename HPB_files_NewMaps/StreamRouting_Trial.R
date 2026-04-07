@@ -154,11 +154,11 @@ generate_streamtable <- function(
 generate_streamtable(
   stream_rast   = "./HPB_files_NewMaps/spatial_data/hpb_stream750.tif",
   dem_rast      = "./HPB_files_NewMaps/spatial_data/hpb_dem.tif",
-  patch_rast    = "./HPB_files_NewMaps/spatial_data/hpb_patch_map.tif",
-  zone_rast     = "./HPB_files_NewMaps/spatial_data/hpb_patch_map.tif",  # zone = patch
+  patch_rast    = "./HPB_files_NewMaps/spatial_data/hpb_patch_kmeans300.tif",
+  zone_rast     = "./HPB_files_NewMaps/spatial_data/hpb_patch_kmeans300.tif",  # zone = patch
   subbasin_rast = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",
   hill_rast     = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",  # hill = subbasin
-  output_file   = "./HPB_files_NewMaps/worldfiles/flowtables/stream.hpb",
+  output_file   = "./HPB_files_NewMaps/worldfiles/world_flow_kmeans300_patches/stream.hpb",
   ManningsN      = 0.035,
   streamTopWidth = 3.0,
   streamBotWidth = 1.5,

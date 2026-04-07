@@ -1,0 +1,76 @@
+---
+title: "testing_eval"
+author: "DWH"
+date: "2026-04-07"
+output: html_document
+---
+
+
+## packages and functions 
+
+```{r}
+library(tidyverse)
+library(RHESSysIOinR)
+
+#functions 
+source("../read_plot_rhessys_fun.R")
+
+#read in validation csv
+target_df <- read_csv("../Target_Data_comp/TargetData_15mar26.csv") |> 
+  rename(date = Date)
+
+```
+
+## Look at basin level output for with stream routing vs without
+
+
+```{r}
+#with routing
+
+# dat = readin_rhessys_output(outname)
+# z <- dat$bd
+read_plot_rhessys(outname = "C:/Users/dwh18/OneDrive/Desktop/R_Projects/RHESSys_development/RHESSys_Tutorial/HPB_files_NewMaps/out/RouteTest100yr/hpb_RouteTest_1", 
+                  date_filter = as.Date("1960-01-01"), ncol = 5, validate = F)
+
+
+#no routing 
+read_plot_rhessys(outname = "C:/Users/dwh18/OneDrive/Desktop/R_Projects/RHESSys_development/RHESSys_Tutorial/HPB_files_NewMaps/out/RouteTest100yr/hpb_RouteTest_NOROUTE", 
+                  date_filter = as.Date("1960-01-01"), ncol = 5, validate = F)
+
+```
+
+
+
+```{r}
+
+##read in streamrouting 
+col_names <- c("day","month","year","reachID","Qout","lateralinput","Qin","waterdepth","reservoir.store","NO3_out","NH4_out","DON_out","DOC_out")
+
+df <- read.table("C:/Users/dwh18/OneDrive/Desktop/R_Projects/RHESSys_development/RHESSys_Tutorial/HPB_files_NewMaps/out/RouteTest100yr/hpb_RouteTest_1_streamrouting.daily",
+                 header = TRUE, col.names = col_names, fill = TRUE)
+head(df)
+
+df |> 
+  mutate(date = ymd(paste(year, month, day, sep = "-"))) |> 
+  select(date, everything()) |> 
+  pivot_longer(-c(1:5)) |> 
+  ggplot(aes(x = date, y = value, color = as.factor(reachID)))+
+  geom_point()+ facet_wrap(~name, scales = "free_y")+ theme_bw()
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

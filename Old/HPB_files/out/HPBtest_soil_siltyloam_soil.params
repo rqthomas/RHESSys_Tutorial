@@ -7,7 +7,6 @@
 1.000000 deltaZ
 0.000000 detention_store_size
 0.120000 m
-0.400000 m_z
 0.000000 max_heat_capacity
 -10.000000 maximum_snow_energy_deficit
 0.000000 min_heat_capacity
@@ -29,7 +28,7 @@
 0.000000 theta_mean_std_p1
 0.000000 theta_mean_std_p2
 0.006200 gl_c
-0.010000 gsurf_slope 
+0.010000 gsurf_slope
 0.001000 gsurf_intercept
 -1.500000 p4
 0.050000 DOM_decay_rate
@@ -38,3 +37,18 @@
 0.000023 DOC_adsorption_rate
 0.000001 DON_adsorption_rate
 0.001000 interval_size
+3.000000 Ksat_0_v
+0.800000 cap_rise_max
+0.120000 m_v
+age snow_albedo_flag
+2.000000 bats_b
+0.300000 bats_r3
+-999.000000 fixed_t_mult
+-999.000000 fixed_w_mult
+0.680000 nitrif_parm_smax
+1.000000 fs_spill
+1.000000 fs_percolation
+0.200000 fs_threshold
+1 recompute_gamma_flag
+6.000000 overstory_height_thresh
+4.000000 understory_height_thresh

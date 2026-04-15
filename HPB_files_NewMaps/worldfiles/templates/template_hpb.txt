@@ -6,7 +6,7 @@ _world hpb_ws.tif 1
 	basin_parm_ID	dvalue 1
 	latitude	value 37.36
 	basin_n_basestations 	dvalue 0
-  	_hillslope hpb_basin750_filled_6apr26.tif 1
+  	_hillslope hpb_basin750_filled_15apr26.tif 1
 		x		value 0.0
 		y		value 0.0
 		z		aver hpb_dem.tif
@@ -20,8 +20,8 @@ _world hpb_ws.tif 1
 			z		  aver hpb_dem.tif
 			zone_parm_ID  	  dvalue 1
 			area		  area
-			slope		  aver hpb_slope_filled_6apr26.tif
-			aspect		  spavg hpb_aspect_filled_6apr26.tif hpb_slope_filled_6apr26.tif
+			slope		  aver hpb_slope.tif
+			aspect		  spavg hpb_aspect.tif hpb_slope.tif
 			precip_lapse_rate value 1.0
 			e_horizon	  eqn 0.01 0.0 hpb_ehr.tif
 			w_horizon	  eqn 0.01 0.0 hpb_whr.tif
@@ -34,7 +34,7 @@ _world hpb_ws.tif 1
 				soil_parm_ID	        value 8.0
 				landuse_parm_ID		value 1.0
 				area			area
-				slope			aver hpb_slope_filled_6apr26.tif
+				slope			aver hpb_slope.tif
 				lna 			value 7.0
 				Ksat_vertical   	value 1.0
 				mpar	        	value 0.0

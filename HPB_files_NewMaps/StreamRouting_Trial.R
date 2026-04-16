@@ -99,36 +99,37 @@ generate_streamtable <- function(
     return(adj_df)
   }
 
-  get_reach_geometry <- function(rid) {
-    cells <- which(as.vector(values(stream)) == rid)
-
-    if (length(cells) == 0) {
-      warning("Reach ", rid, " has 0 cells — skipping")
-      return(list(length = NA, slope = NA))
-    }
-
-    elev_vals   <- as.vector(values(dem))[cells]
-    lat_center  <- mean(yFromCell(dem, cells), na.rm = TRUE)
-    res_m_x     <- res(dem)[1] * 111320 * cos(lat_center * pi / 180)
-    res_m_y     <- res(dem)[2] * 111320
-    res_m       <- sqrt(res_m_x * res_m_y)
-
-    elev_range  <- diff(range(elev_vals, na.rm = TRUE))
-    length_m    <- max(length(cells) * res_m, res_m)   # floor at 1 pixel
-    slope       <- max(elev_range / length_m, 0.0001)
-
-    list(length = round(length_m, 2), slope = round(slope, 6))
-  }
-
+#was for degree to meter conversion
   # get_reach_geometry <- function(rid) {
-  #   cells <- which(values(stream) == rid)
-  #   elev_vals <- values(dem)[cells]
-  #   elev_range <- diff(range(elev_vals, na.rm = TRUE))
-  #   res_m    <- res(dem)[1]
-  #   length_m <- length(cells) * res_m
-  #   slope    <- max(elev_range / length_m, 0.0001)
+  #   cells <- which(as.vector(values(stream)) == rid)
+  #
+  #   if (length(cells) == 0) {
+  #     warning("Reach ", rid, " has 0 cells — skipping")
+  #     return(list(length = NA, slope = NA))
+  #   }
+  #
+  #   elev_vals   <- as.vector(values(dem))[cells]
+  #   lat_center  <- mean(yFromCell(dem, cells), na.rm = TRUE)
+  #   res_m_x     <- res(dem)[1] * 111320 * cos(lat_center * pi / 180)
+  #   res_m_y     <- res(dem)[2] * 111320
+  #   res_m       <- sqrt(res_m_x * res_m_y)
+  #
+  #   elev_range  <- diff(range(elev_vals, na.rm = TRUE))
+  #   length_m    <- max(length(cells) * res_m, res_m)   # floor at 1 pixel
+  #   slope       <- max(elev_range / length_m, 0.0001)
+  #
   #   list(length = round(length_m, 2), slope = round(slope, 6))
   # }
+
+  get_reach_geometry <- function(rid) {
+    cells <- which(values(stream) == rid)
+    elev_vals <- values(dem)[cells]
+    elev_range <- diff(range(elev_vals, na.rm = TRUE))
+    res_m    <- res(dem)[1]
+    length_m <- length(cells) * res_m
+    slope    <- max(elev_range / length_m, 0.0001)
+    list(length = round(length_m, 2), slope = round(slope, 6))
+  }
 
   message("Writing streamtable to: ", output_file)
   con <- file(output_file, "w")
@@ -173,13 +174,13 @@ generate_streamtable <- function(
 
 #### use function
 generate_streamtable(
-  stream_rast   = "./HPB_files_NewMaps/spatial_data/hpb_stream750.tif",
-  dem_rast      = "./HPB_files_NewMaps/spatial_data/hpb_dem.tif",
-  patch_rast    = "./HPB_files_NewMaps/spatial_data/hpb_patch_kmeans300.tif",
-  zone_rast     = "./HPB_files_NewMaps/spatial_data/hpb_patch_kmeans300.tif",  # zone = patch
-  subbasin_rast = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",
-  hill_rast     = "./HPB_files_NewMaps/spatial_data/hpb_basin750_filled_6apr26.tif",  # hill = subbasin
-  output_file   = "./HPB_files_NewMaps/worldfiles/world_flow_kmeans300_patches/stream.hpb",
+  stream_rast   = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_stream750.tif",
+  dem_rast      = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_dem.tif",
+  patch_rast    = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_patch_kmeans300.tif",
+  zone_rast     = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_patch_kmeans300.tif",  # zone = patch
+  subbasin_rast = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_basin750_filled_15apr26.tif",
+  hill_rast     = "./HPB_files_NewMaps/spatial_data/NAD83UTM17N_epsg26917/hpb_basin750_filled_15apr26.tif",  # hill = subbasin
+  output_file   = "./HPB_files_NewMaps/worldfiles/stream.hpb",
   ManningsN      = 0.035,
   streamTopWidth = 3.0,
   streamBotWidth = 1.5,
@@ -249,7 +250,7 @@ read_streamtable <- function(file) {
 
 
 ####read in and check file
-st <- read_streamtable("./HPB_files_NewMaps/stream.hpb")
+st <- read_streamtable("./HPB_files_NewMaps/worldfiles/stream.hpb")
 
 
 
